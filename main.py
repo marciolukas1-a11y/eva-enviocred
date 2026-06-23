@@ -104,6 +104,30 @@ def calcular_operacao(nome, valor, taxa=20, prazo=30, num_contrato=1):
 # Link SuperSim
 SUPERSIM_LINK = "susim.co/7+peoHFiNQsn8C1qFl0tCA=="
 
+# ── Banco de dados em memória (alimenta o Dashboard) ──────────
+DASHBOARD_DATA = {
+    "leads": [],
+    "transacoes": [],
+    "socios_arvore": []
+}
+
+def registrar_no_dashboard(tipo, dados):
+    """Registra evento no banco de dados do servidor para o Dashboard consultar."""
+    tz = pytz.timezone("America/Sao_Paulo")
+    dados["data_registro"] = datetime.now(tz).strftime("%d/%m/%Y %H:%M")
+    dados["tipo"] = tipo
+    if tipo == "lead":
+        existente = next((l for l in DASHBOARD_DATA["leads"] if l.get("telefone") == dados.get("telefone")), None)
+        if existente:
+            existente.update(dados)
+        else:
+            DASHBOARD_DATA["leads"].append(dados)
+    elif tipo == "transacao":
+        DASHBOARD_DATA["transacoes"].append(dados)
+    elif tipo == "socio_arvore":
+        DASHBOARD_DATA["socios_arvore"].append(dados)
+    print(f"[DASHBOARD] {tipo} registrado: {dados.get('nome','?')} | {dados.get('data_registro')}")
+
 # Memória de conversas {numero: {"historico": [], "primeiro_contato": bool}}
 conversas = {}
 
@@ -235,6 +259,31 @@ def gerar_resposta(mensagem_cliente, numero_cliente, historico):
                 num_contrato=nc
             )
             print(f"[CALC] {nome_lead} | R${valor_lead} | status={calc_result['status']}")
+            # Registrar resultado no dashboard
+            if calc_result["status"] == "APROVADA":
+                registrar_no_dashboard("transacao", {
+                    "nome": nome_lead or "Cliente",
+                    "produto": "Crédito Pessoal",
+                    "valor": valor_lead,
+                    "taxa": 20,
+                    "total": calc_result["total"],
+                    "status": "aprovado"
+                })
+                registrar_no_dashboard("lead", {
+                    "nome": nome_lead or "Cliente",
+                    "telefone": numero_cliente,
+                    "produto": "Crédito Pessoal",
+                    "valor": valor_lead,
+                    "status": "aprovado"
+                })
+            elif calc_result["status"] == "AGUARDA_MARCIO":
+                registrar_no_dashboard("lead", {
+                    "nome": nome_lead or "Cliente",
+                    "telefone": numero_cliente,
+                    "produto": "Crédito Pessoal",
+                    "valor": valor_lead,
+                    "status": "aguarda_marcio"
+                })
 
     # ── Montar system prompt com resultado da calculadora (se houver) ──
     calc_inject = ""
@@ -412,6 +461,14 @@ def webhook():
         # ── Histórico e estado do cliente ─────────────────────
         if numero_cliente not in conversas:
             conversas[numero_cliente] = {"historico": [], "primeiro_contato": True}
+            # Registrar como novo lead no dashboard
+            registrar_no_dashboard("lead", {
+                "nome": push_name or "Desconhecido",
+                "telefone": numero_cliente,
+                "produto": "Em qualificação",
+                "status": "novo",
+                "origem": "WhatsApp (Simone)"
+            })
 
         estado = conversas[numero_cliente]
         historico = estado["historico"]
@@ -470,6 +527,37 @@ def health():
         "elevenlabs": bool(ELEVENLABS_API_KEY)
     }), 200
 
+# ── Endpoints do Dashboard ─────────────────────────────────────
+@app.route("/dashboard/dados", methods=["GET"])
+def dashboard_dados():
+    """Retorna todos os dados para o dashboard."""
+    return jsonify({
+        "leads": DASHBOARD_DATA["leads"],
+        "transacoes": DASHBOARD_DATA["transacoes"],
+        "socios_arvore": DASHBOARD_DATA["socios_arvore"],
+        "totais": {
+            "leads": len(DASHBOARD_DATA["leads"]),
+            "transacoes": len(DASHBOARD_DATA["transacoes"]),
+            "socios_arvore": len(DASHBOARD_DATA["socios_arvore"]),
+            "receita": sum(t.get("total", 0) - t.get("valor", 0) for t in DASHBOARD_DATA["transacoes"] if t.get("status") == "aprovado")
+        }
+    }), 200
+
+@app.route("/dashboard/lead", methods=["POST"])
+def dashboard_lead():
+    """Recebe lead manualmente (ex: do painel web)."""
+    dados = request.json or {}
+    registrar_no_dashboard("lead", dados)
+    return jsonify({"status": "ok"}), 200
+
+@app.route("/dashboard/socio", methods=["POST"])
+def dashboard_socio():
+    """Registra sócio do Projeto Árvore."""
+    dados = request.json or {}
+    registrar_no_dashboard("socio_arvore", dados)
+    return jsonify({"status": "ok"}), 200
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
     app.run(host="0.0.0.0", port=port)
+
