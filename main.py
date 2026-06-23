@@ -471,11 +471,24 @@ def webhook():
 
         # Extrair texto
         message = msg_data.get("message", {})
+
+        # Ignorar reações, figurinhas e mídias silenciosamente
+        if (
+            "reactionMessage" in message or
+            "stickerMessage" in message or
+            not message.get("conversation") and not message.get("extendedTextMessage", {}).get("text")
+        ):
+            print(f"[EVA] Mídia/reação/figurinha ignorada de {numero_cliente}")
+            return jsonify({"status": "ignored"}), 200
+
         texto_recebido = (
             message.get("conversation") or
             message.get("extendedTextMessage", {}).get("text") or
-            "[mídia recebida]"
+            ""
         )
+
+        if not texto_recebido.strip():
+            return jsonify({"status": "ignored"}), 200
 
         push_name = msg_data.get("pushName", "") or ""
         nome_lower = push_name.lower()
