@@ -271,7 +271,18 @@ Envie o script acima e aguarde Márcio liberar antes de confirmar."""
 🧮 CALCULADORA — RESULTADO AUTOMÁTICO:
 Status: ❌ BLOQUEADA
 Motivo: {erros_str}
-NÃO avance com esta operação. Informe ao cliente que não é possível no momento."""
+NÃO avance com esta operação. Use o script abaixo para recusar com gentileza:
+---
+Oi {{primeiro_nome}}! 😊 Analisei aqui com cuidado, mas infelizmente não consegui liberar o crédito desta vez.
+Isso pode mudar no futuro! Quando sua situação financeira estiver diferente, pode voltar aqui e a gente tenta de novo. 💙
+Qualquer dúvida, tô à disposição. Obrigada pela confiança na Envio CRED! 🙏
+---
+Se cliente for NEGATIVADO e Super Sim também não aceitar, use este script de encerramento:
+---
+Oi {{primeiro_nome}}! 😊 Fiz tudo que pude aqui, mas no momento as plataformas parceiras também não conseguiram aprovar.
+Não desanima! Assim que seu score melhorar um pouco, as portas se abrem. Se precisar de alguma orientação sobre como limpar o nome, pode me chamar. 💙
+Conte com a Envio CRED sempre que precisar! 🌟
+---"""
 
     system_prompt = f"""Você é Simone, agente de atendimento da Envio CRED.
 
@@ -308,9 +319,9 @@ FLUXO OBRIGATÓRIO PARA NOVOS LEADS:
 2. Coletar: nome completo → valor desejado → CPF → renda mensal
 3. Perguntar: "Seu CPF tem restrição (SPC/Serasa)?"
    - CPF LIMPO → aguardar resultado da Calculadora (injetado abaixo quando disponível)
-   - NEGATIVADO → Super Sim → se não conseguir → Projeto Árvore
+   - NEGATIVADO → Super Sim → se Super Sim também recusar → encerrar com script de recusa gentil (não insistir, não inventar alternativas)
 4. Se cliente perguntar sobre Projeto Árvore → explicar e mandar link
-5. Se nenhum produto servir → recusa gentil{calc_inject}
+5. Se nenhum produto servir → usar script de recusa gentil, agradecer pela confiança e encerrar com carinho{calc_inject}
 
 GELADEIRA — ignorar silenciosamente: Vera, Sandra, Breno
 
