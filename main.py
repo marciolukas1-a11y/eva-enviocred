@@ -548,11 +548,12 @@ def health():
     tz = pytz.timezone("America/Sao_Paulo")
     now = datetime.now(tz).strftime("%d/%m/%Y %H:%M")
     return jsonify({
-        "status": "Eva online 🤖",
-        "horario_funcionamento": dentro_do_horario(),
+        "status": "Simone online 24h/7d 🤖",
+        "versao": "4.0",
         "agora": now,
         "groq": bool(GROQ_API_KEY),
-        "elevenlabs": bool(ELEVENLABS_API_KEY)
+        "elevenlabs": bool(ELEVENLABS_API_KEY),
+        "endpoints": ["/webhook", "/dashboard/dados", "/dashboard/lead", "/dashboard/socio"]
     }), 200
 
 # ── Endpoints do Dashboard ─────────────────────────────────────
