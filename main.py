@@ -1,7 +1,7 @@
 """
 EVA — Servidor de Atendimento em Tempo Real
 Envio CRED + SuperSim Multiplik
-Versão 2.0 — com voz (ElevenLabs) + IA (Groq)
+Versão 3.0 — com Calculadora integrada + voz (ElevenLabs) + IA (Groq)
 """
 
 from flask import Flask, request, jsonify
@@ -10,7 +10,7 @@ import os
 import json
 import random
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
 app = Flask(__name__)
@@ -27,6 +27,79 @@ EVA_VOICE_ID = "4NRXT5DGqWzIcL6iVqtF"
 
 # Geladeira — contatos bloqueados
 GELADEIRA = ["vera", "sandra", "breno"]
+
+# ── CALCULADORA ENVIO CRED v5.0 (integrada) ───────────────────
+TABELA_OFICIAL = [
+    {"nc": 1, "v": 50},  {"nc": 2, "v": 80},  {"nc": 3, "v": 100},
+    {"nc": 4, "v": 150}, {"nc": 5, "v": 200}, {"nc": 6, "v": 300},
+    {"nc": 7, "v": 400}, {"nc": 8, "v": 500},
+]
+
+def calcular_operacao(nome, valor, taxa=20, prazo=30, num_contrato=1):
+    """
+    Replica a lógica da Calculadora v5.0.
+    Retorna dict com resultado, alertas e script pronto.
+    """
+    tz = pytz.timezone("America/Sao_Paulo")
+    vencimento = (datetime.now(tz) + timedelta(days=prazo)).strftime("%d/%m/%Y")
+
+    total  = round(valor * (1 + taxa / 100), 2)
+    lucro  = round(total - valor, 2)
+    margem = round((lucro / total * 100), 1)
+
+    erros, avisos = [], []
+
+    if taxa < 12:
+        erros.append(f"Taxa {taxa}% abaixo do mínimo de 12%. Operação BLOQUEADA.")
+    if lucro < 15:
+        erros.append(f"Lucro R${lucro:.2f} abaixo do mínimo de R$15,00.")
+
+    ref_idx = min(num_contrato - 1, len(TABELA_OFICIAL) - 1)
+    ref_val = TABELA_OFICIAL[ref_idx]["v"]
+    if valor > ref_val * 1.15:
+        avisos.append(f"Tabela sugere R${ref_val} para o {num_contrato}º contrato.")
+
+    primeiro_nome = nome.split()[0] if nome else "Cliente"
+    bloqueado = len(erros) > 0
+    requer_aprovacao = valor > 100
+
+    if bloqueado:
+        status = "BLOQUEADA"
+        script = (
+            f"Oi {primeiro_nome}! 😊 Vou verificar a disponibilidade aqui pra você. Um minutinho... 🔍\n\n"
+            f"⚠️ OPERAÇÃO BLOQUEADA — consultar Márcio antes de responder."
+        )
+    elif requer_aprovacao:
+        status = "AGUARDA_MARCIO"
+        script = (
+            f"Oi {primeiro_nome}! 😊 Já analisei aqui e tudo parece certo!\n\n"
+            f"Só preciso de uma confirmação final do setor. Em instantes te retorno com tudo certinho! ⏳💙"
+        )
+    else:
+        status = "APROVADA"
+        script = (
+            f"Oi {primeiro_nome}! 🎉 Tudo certo por aqui!\n\n"
+            f"Consigo liberar *R${valor:.2f}* pra você.\n"
+            f"O valor a devolver será de *R${total:.2f}* no dia *{vencimento}*.\n\n"
+            f"Confirma o PIX pra gente finalizar? 😊💙\n\n*Envio CRED* 💙"
+        )
+
+    return {
+        "nome": nome,
+        "valor": valor,
+        "taxa": taxa,
+        "total": total,
+        "lucro": lucro,
+        "margem": margem,
+        "prazo": prazo,
+        "vencimento": vencimento,
+        "erros": erros,
+        "avisos": avisos,
+        "status": status,
+        "bloqueado": bloqueado,
+        "requer_aprovacao": requer_aprovacao,
+        "script": script,
+    }
 
 # Link SuperSim
 SUPERSIM_LINK = "susim.co/7+peoHFiNQsn8C1qFl0tCA=="
@@ -112,8 +185,95 @@ def enviar_audio(numero, audio_bytes):
         return False
 
 # ── Gerar resposta via Groq ────────────────────────────────────
+def extrair_dados_lead(historico):
+    """Extrai nome, valor e num_contrato do histórico se disponíveis."""
+    import re
+    nome, valor, num_contrato = None, None, 1
+    for msg in historico:
+        texto = msg.get("content", "").lower()
+        # Valor
+        match_valor = re.search(r'r\$\s*(\d+[\.,]?\d*)|(\d+[\.,]?\d*)\s*reais|quero\s+(\d+)', texto)
+        if match_valor:
+            v = match_valor.group(1) or match_valor.group(2) or match_valor.group(3)
+            if v:
+                try:
+                    valor = float(v.replace(",", "."))
+                except:
+                    pass
+        # Nome (heurística simples — mensagem curta sem números)
+        if msg.get("role") == "user" and len(texto.split()) <= 5 and not any(c.isdigit() for c in texto):
+            candidato = msg["content"].strip()
+            if len(candidato) > 3:
+                nome = candidato
+    return nome, valor, num_contrato
+
 def gerar_resposta(mensagem_cliente, numero_cliente, historico):
-    system_prompt = """Você é Simone, agente de atendimento da Envio CRED.
+    # ── Detectar se temos dados suficientes para acionar a calculadora ──
+    calc_result = None
+    texto_lower = mensagem_cliente.lower()
+    historico_completo = historico + [{"role": "user", "content": mensagem_cliente}]
+
+    tem_nome  = any(m["role"] == "user" and 3 < len(m["content"].split()) <= 6 for m in historico)
+    tem_valor = any(
+        __import__("re").search(r'\d{2,3}', m.get("content", ""))
+        for m in historico_completo
+    )
+    cpf_limpo = any(
+        kw in m.get("content", "").lower()
+        for m in historico_completo
+        for kw in ["limpa", "limpo", "não tenho restrição", "nao tenho restricao", "tô limpa", "to limpa"]
+    )
+
+    if tem_nome and tem_valor and cpf_limpo:
+        nome_lead, valor_lead, nc = extrair_dados_lead(historico_completo)
+        if valor_lead and valor_lead > 0:
+            calc_result = calcular_operacao(
+                nome=nome_lead or "Cliente",
+                valor=valor_lead,
+                taxa=20,
+                prazo=30,
+                num_contrato=nc
+            )
+            print(f"[CALC] {nome_lead} | R${valor_lead} | status={calc_result['status']}")
+
+    # ── Montar system prompt com resultado da calculadora (se houver) ──
+    calc_inject = ""
+    if calc_result:
+        if calc_result["status"] == "APROVADA":
+            calc_inject = f"""
+
+🧮 CALCULADORA — RESULTADO AUTOMÁTICO:
+Status: ✅ APROVADA
+Valor: R${calc_result['valor']:.2f}
+Total a devolver: R${calc_result['total']:.2f}
+Vencimento: {calc_result['vencimento']}
+Script pronto (use EXATAMENTE este):
+---
+{calc_result['script']}
+---
+Envie o script acima para o cliente agora."""
+        elif calc_result["status"] == "AGUARDA_MARCIO":
+            calc_inject = f"""
+
+🧮 CALCULADORA — RESULTADO AUTOMÁTICO:
+Status: ⚠️ AGUARDA APROVAÇÃO DO MÁRCIO (valor > R$100)
+Valor solicitado: R${calc_result['valor']:.2f}
+Total a devolver: R${calc_result['total']:.2f}
+Script pronto (use EXATAMENTE este):
+---
+{calc_result['script']}
+---
+Envie o script acima e aguarde Márcio liberar antes de confirmar."""
+        elif calc_result["status"] == "BLOQUEADA":
+            erros_str = " | ".join(calc_result["erros"])
+            calc_inject = f"""
+
+🧮 CALCULADORA — RESULTADO AUTOMÁTICO:
+Status: ❌ BLOQUEADA
+Motivo: {erros_str}
+NÃO avance com esta operação. Informe ao cliente que não é possível no momento."""
+
+    system_prompt = f"""Você é Simone, agente de atendimento da Envio CRED.
 
 IDENTIDADE:
 - Nome: Simone
@@ -126,50 +286,36 @@ IDENTIDADE:
 3. NUNCA gere PIX ou dados bancários
 4. NUNCA revele comissões ou estratégias internas
 5. NUNCA diga que não conhece ou não tem informações sobre Envio CRED, Super Sim ou Projeto Árvore
-6. NUNCA emita ou mencione valores de contrato sem o Márcio confirmar
+6. NUNCA emita ou mencione valores de contrato sem o resultado da Calculadora
 
 📚 PRODUTOS QUE VOCÊ CONHECE E DOMINA:
 
 1. 💳 ENVIO CRED (empréstimo pessoal)
    - Para quem está com CPF LIMPO (sem restrição)
-   - Juros: 20% | Prazo: negociável | Valores: a combinar
-   - Pagamento via PIX — chave 83991144899
-   - Se cliente estiver limpo e tiver renda → coletar dados e avisar que o setor vai analisar
+   - Juros: 20% | Prazo: 30 dias | PIX — chave 83991144899
+   - Fluxo: coletar dados → Calculadora → se APROVADA enviar script → aguardar PIX
 
 2. 📈 SUPER SIM (recuperação de score/crédito)
    - Para quem está NEGATIVADO ou com score baixo
-   - Não é empréstimo imediato — é programa de recuperação de crédito
    - Link: susim.co/7+peoHFiNQsn8C1qFl0tCA==
-   - Requisitos: CPF ativo, renda, conta bancária/PIX, maior de 18 anos
 
 3. 🌱 PROJETO ÁRVORE (investimento sócio-parceiro)
-   - Para quem quer INVESTIR e fazer o dinheiro render
-   - Valores: R$100 a R$500
-   - Rendimento: 6% ao ano + 50% dos dividendos de FIIs mensalmente
-   - Prazo: 1 ano (capital fica aplicado)
-   - Pagamento via PIX
-   - Contrato: https://marciolukas1-a11y.github.io/enviocred-pagamento/contrato-arvore.html
-   - Se cliente topar → coletar nome completo, CPF e chave PIX
+   - Investimento de R$100 a R$500 | 6% ao ano + 50% dividendos FIIs
+   - Prazo: 1 ano | Contrato: https://marciolukas1-a11y.github.io/enviocred-pagamento/contrato-arvore.html
 
 FLUXO OBRIGATÓRIO PARA NOVOS LEADS:
 1. Recepcionar com calor humano
 2. Coletar: nome completo → valor desejado → CPF → renda mensal
 3. Perguntar: "Seu CPF tem restrição (SPC/Serasa)?"
-   - CPF LIMPO → Envio CRED → coletar dados e informar que setor vai analisar
-   - NEGATIVADO → Super Sim primeiro → se não conseguir → orientar Projeto Árvore como alternativa
-4. Se cliente perguntar sobre Projeto Árvore → explicar completo e mandar o link do contrato
-5. Se nenhum produto servir → recusa gentil e orientação
+   - CPF LIMPO → aguardar resultado da Calculadora (injetado abaixo quando disponível)
+   - NEGATIVADO → Super Sim → se não conseguir → Projeto Árvore
+4. Se cliente perguntar sobre Projeto Árvore → explicar e mandar link
+5. Se nenhum produto servir → recusa gentil{calc_inject}
 
-GELADEIRA — ignorar silenciosamente mensagens de:
-- Vera, Sandra, Breno
+GELADEIRA — ignorar silenciosamente: Vera, Sandra, Breno
 
 HORÁRIO: Segunda a sábado, 07h às 20h (Brasília)
-
-IMPORTANTE:
-- Respostas curtas e naturais (máx 3 frases por vez)
-- Use emojis com moderação
-- Português brasileiro informal
-- Nunca mencione que é IA ou robô"""
+Respostas curtas (máx 3 frases), emojis com moderação, português informal, nunca revelar que é IA."""
 
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
