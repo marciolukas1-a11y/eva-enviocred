@@ -1,0 +1,13 @@
+{
+  "name": "eva-enviocred",
+  "version": "1.0.0",
+  "description": "EVA — Especialista Virtual Autônoma — Envio CRED",
+  "main": "src/eva.js",
+  "scripts": {
+    "start": "node src/eva.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0"
+  }
+}
