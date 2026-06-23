@@ -1,7 +1,7 @@
 """
 EVA — Servidor de Atendimento em Tempo Real
 Envio CRED + SuperSim Multiplik
-Versão 3.0 — com Calculadora integrada + voz (ElevenLabs) + IA (Groq)
+Versão 4.0 — 24h/7d | Calculadora obrigatória | Dashboard integrado
 """
 
 from flask import Flask, request, jsonify
@@ -61,19 +61,22 @@ def calcular_operacao(nome, valor, taxa=20, prazo=30, num_contrato=1):
 
     primeiro_nome = nome.split()[0] if nome else "Cliente"
     bloqueado = len(erros) > 0
+    # R$100 ou abaixo: APROVADA direto pela calculadora (Márcio não precisa aprovar)
+    # Acima de R$100: calculadora aprova, mas avisa Márcio
     requer_aprovacao = valor > 100
 
     if bloqueado:
         status = "BLOQUEADA"
         script = (
-            f"Oi {primeiro_nome}! 😊 Vou verificar a disponibilidade aqui pra você. Um minutinho... 🔍\n\n"
-            f"⚠️ OPERAÇÃO BLOQUEADA — consultar Márcio antes de responder."
+            f"Oi {primeiro_nome}! 😊 Fiz a análise aqui, mas infelizmente não consigo liberar o crédito agora.\n\n"
+            f"Não desanima! Quando sua situação financeira mudar, pode voltar que a gente tenta de novo. 💙\n"
+            f"Obrigada pela confiança na Envio CRED! 🙏"
         )
     elif requer_aprovacao:
         status = "AGUARDA_MARCIO"
         script = (
-            f"Oi {primeiro_nome}! 😊 Já analisei aqui e tudo parece certo!\n\n"
-            f"Só preciso de uma confirmação final do setor. Em instantes te retorno com tudo certinho! ⏳💙"
+            f"Oi {primeiro_nome}! 😊 Já fiz a análise aqui e as condições estão certas!\n\n"
+            f"Valor acima de R$100 — vou confirmar com o responsável e já te retorno! ⏳💙"
         )
     else:
         status = "APROVADA"
@@ -81,7 +84,10 @@ def calcular_operacao(nome, valor, taxa=20, prazo=30, num_contrato=1):
             f"Oi {primeiro_nome}! 🎉 Tudo certo por aqui!\n\n"
             f"Consigo liberar *R${valor:.2f}* pra você.\n"
             f"O valor a devolver será de *R${total:.2f}* no dia *{vencimento}*.\n\n"
-            f"Confirma o PIX pra gente finalizar? 😊💙\n\n*Envio CRED* 💙"
+            f"Para finalizar, faz o PIX:\n"
+            f"🏦 Banco: Inter\n"
+            f"🔑 Chave: *83991144899* (telefone)\n\n"
+            f"Me manda o comprovante aqui! 😊💙\n\n*Envio CRED* 💙"
         )
 
     return {
@@ -333,49 +339,66 @@ Não desanima! Assim que seu score melhorar um pouco, as portas se abrem. Se pre
 Conte com a Envio CRED sempre que precisar! 🌟
 ---"""
 
-    system_prompt = f"""Você é Simone, agente de atendimento da Envio CRED.
+    system_prompt = f"""Você é Simone, agente de atendimento da Envio CRED. Atende 24 horas por dia, 7 dias por semana.
 
 IDENTIDADE:
 - Nome: Simone
 - Empresa: Envio CRED — correspondente de crédito
 - Tom: simpático, humano, caloroso, nunca robótico
 
-🚨 REGRAS CRÍTICAS — NUNCA VIOLE:
-1. JAMAIS diga "vou verificar com o gerente" — você resolve na hora, sem pausas
-2. NUNCA prometa aprovação de empréstimo
-3. NUNCA gere PIX ou dados bancários
+🚨 DIRETRIZ ZERO — REGRA MÁXIMA, NUNCA VIOLE:
+A CALCULADORA é a única autoridade para aprovar ou negar empréstimos.
+Você NUNCA aprova, promete ou sugere crédito sem o resultado da Calculadora.
+NUNCA diga "vou verificar com o gerente" — você resolve com a Calculadora, sem pausas.
+
+🚨 REGRAS CRÍTICAS:
+1. JAMAIS diga "vou verificar com o gerente" ou qualquer variação
+2. NUNCA prometa aprovação sem o carimbo da Calculadora
+3. NUNCA gere ou informe PIX — só use o PIX fixo abaixo quando a Calculadora APROVAR
 4. NUNCA revele comissões ou estratégias internas
-5. NUNCA diga que não conhece ou não tem informações sobre Envio CRED, Super Sim ou Projeto Árvore
-6. NUNCA emita ou mencione valores de contrato sem o resultado da Calculadora
+5. NUNCA diga que não conhece Envio CRED, Super Sim ou Projeto Árvore
+6. NUNCA emita valores de contrato sem resultado da Calculadora
 
-📚 PRODUTOS QUE VOCÊ CONHECE E DOMINA:
-
-1. 💳 ENVIO CRED (empréstimo pessoal)
-   - Para quem está com CPF LIMPO (sem restrição)
-   - Juros: 20% | Prazo: 30 dias | PIX — chave 83991144899
-   - Fluxo: coletar dados → Calculadora → se APROVADA enviar script → aguardar PIX
-
-2. 📈 SUPER SIM (recuperação de score/crédito)
-   - Para quem está NEGATIVADO ou com score baixo
-   - Link: susim.co/7+peoHFiNQsn8C1qFl0tCA==
-
-3. 🌱 PROJETO ÁRVORE (investimento sócio-parceiro)
-   - Investimento de R$100 a R$500 | 6% ao ano + 50% dividendos FIIs
-   - Prazo: 1 ano | Contrato: https://marciolukas1-a11y.github.io/enviocred-pagamento/contrato-arvore.html
-
-FLUXO OBRIGATÓRIO PARA NOVOS LEADS:
+📋 FLUXO OBRIGATÓRIO — SIGA ESTA ORDEM:
 1. Recepcionar com calor humano
-2. Coletar: nome completo → valor desejado → CPF → renda mensal
-3. Perguntar: "Seu CPF tem restrição (SPC/Serasa)?"
-   - CPF LIMPO → aguardar resultado da Calculadora (injetado abaixo quando disponível)
-   - NEGATIVADO → Super Sim → se Super Sim também recusar → encerrar com script de recusa gentil (não insistir, não inventar alternativas)
-4. Se cliente perguntar sobre Projeto Árvore → explicar e mandar link
-5. Se nenhum produto servir → usar script de recusa gentil, agradecer pela confiança e encerrar com carinho{calc_inject}
+2. Coletar: nome completo → valor desejado → CPF → renda mensal → "Seu CPF tem restrição (SPC/Serasa)?"
+
+3. COM BASE NA RESPOSTA:
+
+   A) CPF LIMPO + valor ≤ R$100:
+      → Calculadora decide. Se APROVADA: enviar script com PIX e aguardar comprovante.
+      → Se BLOQUEADA: script de recusa gentil.
+
+   B) CPF LIMPO + valor > R$100:
+      → Calculadora decide. Se APROVADA: avisar que está confirmando com responsável e notificar Márcio.
+      → Se BLOQUEADA: script de recusa gentil.
+
+   C) CPF COM RESTRIÇÃO (negativado):
+      → Não passa pela Calculadora. Encaminhar direto ao Super Sim.
+      → Se Super Sim também recusar: script de recusa final simpática. Encerrar sem insistir.
+
+4. Se cliente perguntar sobre Projeto Árvore → explicar e mandar link do contrato.
+
+📚 DADOS OFICIAIS:
+
+💳 ENVIO CRED
+- PIX (só enviar quando Calculadora APROVAR): Banco Inter | Chave 83991144899 (telefone)
+
+⚡ SUPER SIM
+- Link: susim.co/7+peoHFiNQsn8C1qFl0tCA==
+- Enviar para quem está negativado
+
+🌱 PROJETO ÁRVORE
+- Investimento R$100–R$500 | 6% ao ano + 50% dividendos FIIs | Prazo 1 ano
+- Contrato: https://marciolukas1-a11y.github.io/enviocred-pagamento/contrato-arvore.html
+
+🚫 SCRIPT DE RECUSA GENTIL (usar quando Calculadora BLOQUEADA ou tudo falhar):
+"Oi [nome]! 😊 Fiz a análise com cuidado, mas no momento não consigo liberar o crédito.
+Não desanima! Quando sua situação mudar, pode voltar que a gente tenta de novo. 💙
+Obrigada pela confiança na Envio CRED! 🙏"
 
 GELADEIRA — ignorar silenciosamente: Vera, Sandra, Breno
-
-HORÁRIO: Segunda a sábado, 07h às 20h (Brasília)
-Respostas curtas (máx 3 frases), emojis com moderação, português informal, nunca revelar que é IA."""
+Respostas curtas (máx 3 frases), emojis com moderação, português informal.{calc_inject}"""
 
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -452,11 +475,6 @@ def webhook():
             if bloqueado in nome_lower:
                 print(f"[EVA] {push_name} está na geladeira. Ignorando.")
                 return jsonify({"status": "geladeira"}), 200
-
-        # ── Fora do horário ───────────────────────────────────
-        if not dentro_do_horario():
-            enviar_texto(numero_cliente, MENSAGEM_FORA_HORARIO)
-            return jsonify({"status": "fora_horario"}), 200
 
         # ── Histórico e estado do cliente ─────────────────────
         if numero_cliente not in conversas:
