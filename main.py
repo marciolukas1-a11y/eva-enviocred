@@ -15,6 +15,20 @@ import pytz
 
 app = Flask(__name__)
 
+# ── CORS — permite chamadas do GitHub Pages ────────────────────
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    return response
+
+@app.route('/dashboard/dados', methods=['OPTIONS'])
+@app.route('/dashboard/lead', methods=['OPTIONS'])
+@app.route('/dashboard/socio', methods=['OPTIONS'])
+def options_handler():
+    return '', 204
+
 # ── Configurações ──────────────────────────────────────────────
 EVOLUTION_API_URL  = os.environ.get("EVOLUTION_API_URL", "https://evolution-api-production-08787.up.railway.app")
 EVOLUTION_API_KEY  = os.environ.get("EVOLUTION_API_KEY", "")
