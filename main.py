@@ -490,6 +490,22 @@ def webhook():
         if not texto_recebido.strip():
             return jsonify({"status": "ignored"}), 200
 
+        # Ignorar emojis isolados (ex: ❤️ 👍 😊 após encerramento)
+        def so_emojis(texto):
+            import unicodedata
+            texto = texto.strip()
+            if not texto:
+                return False
+            for char in texto:
+                cat = unicodedata.category(char)
+                if cat.startswith("L") or cat.startswith("N"):
+                    return False
+            return True
+
+        if so_emojis(texto_recebido):
+            print(f"[EVA] Emoji isolado ignorado de {numero_cliente}: {texto_recebido}")
+            return jsonify({"status": "ignored"}), 200
+
         push_name = msg_data.get("pushName", "") or ""
         nome_lower = push_name.lower()
 
