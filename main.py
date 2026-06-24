@@ -410,7 +410,18 @@ Não desanima! Sua situação pode mudar e quando isso acontecer, pode voltar qu
 Foi um prazer te atender! Obrigada pela confiança na Envio CRED! 🙏"
 
 GELADEIRA — ignorar silenciosamente: Vera, Sandra, Breno
-Respostas curtas (máx 3 frases), emojis com moderação, português informal.{calc_inject}"""
+Respostas curtas (máx 3 frases), emojis com moderação, português informal.
+
+📎 QUANDO CLIENTE ENVIAR DOCUMENTO OU IMAGEM:
+- O sistema vai te avisar com: [cliente enviou documento como comprovante] ou [cliente enviou imagem como comprovante]
+- Isso significa que o cliente mandou um comprovante de renda, extrato ou holerite
+- Responda reconhecendo e continue o fluxo normalmente: "Recebi seu comprovante! ✅ ..."
+- Se ainda faltar informações (CPF, valor desejado), continue coletando
+- NUNCA diga que não consegue ver ou receber documentos
+
+🎙️ QUANDO CLIENTE ENVIAR ÁUDIO:
+- O sistema vai te avisar com: [cliente enviou áudio]
+- Responda: "Oi! Não consigo ouvir áudios aqui, mas pode me mandar por texto que respondo na hora! 😊"{calc_inject}"""
 
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -472,14 +483,15 @@ def webhook():
         # Extrair texto
         message = msg_data.get("message", {})
 
-        # Ignorar reações, figurinhas e mídias silenciosamente
-        if (
-            "reactionMessage" in message or
-            "stickerMessage" in message or
-            not message.get("conversation") and not message.get("extendedTextMessage", {}).get("text")
-        ):
-            print(f"[EVA] Mídia/reação/figurinha ignorada de {numero_cliente}")
+        # Ignorar reações e figurinhas silenciosamente
+        if "reactionMessage" in message or "stickerMessage" in message:
+            print(f"[EVA] Reação/figurinha ignorada de {numero_cliente}")
             return jsonify({"status": "ignored"}), 200
+
+        # Detectar documentos e imagens (comprovante de renda, etc.)
+        eh_documento = "documentMessage" in message
+        eh_imagem = "imageMessage" in message
+        eh_audio_cliente = "audioMessage" in message and not key.get("fromMe", False)
 
         texto_recebido = (
             message.get("conversation") or
@@ -487,23 +499,19 @@ def webhook():
             ""
         )
 
+        # Se mandou documento ou imagem, tratar como comprovante e continuar o fluxo
+        if eh_documento or eh_imagem:
+            tipo = "documento" if eh_documento else "imagem"
+            caption = message.get("documentMessage", {}).get("caption") or \
+                      message.get("imageMessage", {}).get("caption") or ""
+            texto_recebido = f"[cliente enviou {tipo} como comprovante] {caption}".strip()
+            print(f"[EVA] {tipo.upper()} recebido de {numero_cliente} — tratando como comprovante")
+
+        # Áudio do cliente — avisar que não consegue ouvir
+        if eh_audio_cliente:
+            texto_recebido = "[cliente enviou áudio]"
+
         if not texto_recebido.strip():
-            return jsonify({"status": "ignored"}), 200
-
-        # Ignorar emojis isolados (ex: ❤️ 👍 😊 após encerramento)
-        def so_emojis(texto):
-            import unicodedata
-            texto = texto.strip()
-            if not texto:
-                return False
-            for char in texto:
-                cat = unicodedata.category(char)
-                if cat.startswith("L") or cat.startswith("N"):
-                    return False
-            return True
-
-        if so_emojis(texto_recebido):
-            print(f"[EVA] Emoji isolado ignorado de {numero_cliente}: {texto_recebido}")
             return jsonify({"status": "ignored"}), 200
 
         push_name = msg_data.get("pushName", "") or ""
