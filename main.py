@@ -1,7 +1,8 @@
 """
 EVA — Servidor de Atendimento em Tempo Real
 Envio CRED + SuperSim Multiplik
-Versão 4.0 — 24h/7d | Calculadora obrigatória | Dashboard integrado
+Versao 4.1 — 24h/7d | Calculadora obrigatoria | Dashboard integrado
+Atualizado: 24/06/2026 — modo silencio Marcio + VIPs
 """
 
 from flask import Flask, request, jsonify
