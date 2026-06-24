@@ -43,6 +43,9 @@ def eh_contato_vip(numero):
             return nome_vip
     return None
 
+# Números do Márcio — Simone entra em modo silêncio imediatamente
+MARCIO_NUMBERS = ['5583999628152', '5583991144899']
+
 # ── CALCULADORA ENVIO CRED v5.0 (integrada) ───────────────────
 TABELA_OFICIAL = [
     {"nc": 1, "v": 50},  {"nc": 2, "v": 80},  {"nc": 3, "v": 100},
@@ -531,6 +534,11 @@ def webhook():
         nome_lower = push_name.lower()
 
         print(f"[EVA] De: {push_name} ({numero_cliente}): {texto_recebido}")
+
+        # ── Número do Márcio — modo silêncio imediato ─────────
+        if any(numero_cliente.endswith(n[-9:]) for n in MARCIO_NUMBERS):
+            print(f"[EVA] Mensagem do Márcio ({numero_cliente}). Modo silêncio.")
+            return jsonify({"status": "marcio_silencio"}), 200
 
         # ── Contato VIP (parceiro/empresa externa) ───────────
         nome_vip = eh_contato_vip(numero_cliente)
