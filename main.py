@@ -30,6 +30,19 @@ EVA_VOICE_ID = "4NRXT5DGqWzIcL6iVqtF"
 # Geladeira — contatos bloqueados
 GELADEIRA = ["vera", "sandra", "breno"]
 
+# VIPs — parceiros, fornecedores e empresas externas
+# Simone NÃO inicia fluxo de empréstimo com esses números — encaminha direto ao Márcio
+CONTATOS_VIP = {
+    "5511000000000": "Crefisa",       # substitua pelo número real quando vier o contato
+}
+
+def eh_contato_vip(numero):
+    """Retorna o nome do VIP se for um contato especial, senão None."""
+    for num_vip, nome_vip in CONTATOS_VIP.items():
+        if numero.endswith(num_vip[-8:]):   # compara pelos 8 últimos dígitos (ignora DDI)
+            return nome_vip
+    return None
+
 # ── CALCULADORA ENVIO CRED v5.0 (integrada) ───────────────────
 TABELA_OFICIAL = [
     {"nc": 1, "v": 50},  {"nc": 2, "v": 80},  {"nc": 3, "v": 100},
@@ -518,6 +531,23 @@ def webhook():
         nome_lower = push_name.lower()
 
         print(f"[EVA] De: {push_name} ({numero_cliente}): {texto_recebido}")
+
+        # ── Contato VIP (parceiro/empresa externa) ───────────
+        nome_vip = eh_contato_vip(numero_cliente)
+        if nome_vip:
+            print(f"[EVA] Contato VIP detectado: {nome_vip} ({numero_cliente}). Encaminhando ao Márcio.")
+            enviar_texto(
+                MARCIO_NUMBER,
+                f"📌 *Mensagem de parceiro/empresa:*
+"                f"*De:* {nome_vip} ({push_name})
+"                f"*Número:* {numero_cliente}
+"                f"*Mensagem:* {texto_recebido}"
+            )
+            enviar_texto(
+                numero_cliente,
+                f"Olá! Sua mensagem foi recebida e encaminhada ao responsável da Envio CRED. "                f"Em breve você receberá um retorno. Obrigado! 😊"
+            )
+            return jsonify({"status": "vip_encaminhado"}), 200
 
         # ── Geladeira ─────────────────────────────────────────
         for bloqueado in GELADEIRA:
