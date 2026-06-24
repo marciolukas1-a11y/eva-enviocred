@@ -544,17 +544,9 @@ def webhook():
         nome_vip = eh_contato_vip(numero_cliente)
         if nome_vip:
             print(f"[EVA] Contato VIP detectado: {nome_vip} ({numero_cliente}). Encaminhando ao Márcio.")
-            enviar_texto(
-                MARCIO_NUMBER,
-                f"📌 *Mensagem de parceiro/empresa:*
-"                f"*De:* {nome_vip} ({push_name})
-"                f"*Número:* {numero_cliente}
-"                f"*Mensagem:* {texto_recebido}"
-            )
-            enviar_texto(
-                numero_cliente,
-                f"Olá! Sua mensagem foi recebida e encaminhada ao responsável da Envio CRED. "                f"Em breve você receberá um retorno. Obrigado! 😊"
-            )
+            msg_vip = "Mensagem de parceiro/empresa:" + chr(10) + "De: " + nome_vip + " (" + push_name + ")" + chr(10) + "Numero: " + numero_cliente + chr(10) + "Mensagem: " + texto_recebido
+            enviar_texto(MARCIO_NUMBER, msg_vip)
+            enviar_texto(numero_cliente, "Ola! Sua mensagem foi encaminhada ao responsavel da Envio CRED. Em breve voce recebera um retorno.")
             return jsonify({"status": "vip_encaminhado"}), 200
 
         # ── Geladeira ─────────────────────────────────────────
