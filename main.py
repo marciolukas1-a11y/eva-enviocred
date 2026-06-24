@@ -537,6 +537,8 @@ def webhook():
 
         # -- Numero do Marcio -- modo silencio
         numero_limpo = numero_cliente.replace("+","").replace("-","").replace(" ","")
+        print("[EVA DEBUG] numero_limpo=" + numero_limpo + " MARCIO_NUMBERS=" + str(MARCIO_NUMBERS))
+        print("[EVA DEBUG] sufixos=" + str([n[-9:] for n in MARCIO_NUMBERS]))
         if any(numero_limpo.endswith(n[-9:]) or numero_limpo == n for n in MARCIO_NUMBERS):
             print("[EVA] Mensagem do Marcio. Modo silencio.")
             return jsonify({"status": "marcio_silencio"}), 200
