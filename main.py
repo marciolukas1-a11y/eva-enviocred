@@ -541,6 +541,62 @@ def dashboard_socio():
     registrar_no_dashboard("socio_arvore", dados)
     return jsonify({"status": "ok"}), 200
 
+# ── Cotações em tempo real (Yahoo Finance) ─────────────────────
+import re as _re
+
+_cache_cotacoes = {}
+_cache_ts = {}
+
+def buscar_cotacao_yahoo(ticker):
+    """Busca cotação real no Yahoo Finance. Ticker BR: KNCR11 → KNCR11.SA"""
+    agora = datetime.now(tz).timestamp()
+    if ticker in _cache_cotacoes and agora - _cache_ts.get(ticker, 0) < 300:
+        return _cache_cotacoes[ticker]
+    try:
+        symbol = ticker if "." in ticker else (ticker + ".SA" if len(ticker) == 6 and ticker.isalpha() == False else ticker)
+        # Tenta com .SA primeiro (B3), depois sem
+        for sym in [symbol, ticker]:
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=1d"
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+            if r.status_code == 200:
+                data = r.json()
+                meta = data.get("chart", {}).get("result", [{}])[0].get("meta", {})
+                preco = meta.get("regularMarketPrice") or meta.get("previousClose")
+                if preco:
+                    variacao = meta.get("regularMarketChangePercent", 0)
+                    resultado = {
+                        "ticker": ticker,
+                        "symbol": sym,
+                        "preco": round(float(preco), 2),
+                        "variacao_pct": round(float(variacao), 2),
+                        "moeda": meta.get("currency", "BRL"),
+                        "mercado": "aberto" if meta.get("marketState") == "REGULAR" else "fechado",
+                        "atualizado": datetime.now(tz).strftime("%H:%M:%S")
+                    }
+                    _cache_cotacoes[ticker] = resultado
+                    _cache_ts[ticker] = agora
+                    return resultado
+    except Exception as e:
+        print(f"[COTACAO] Erro {ticker}: {e}")
+    return None
+
+@app.route("/cotacoes", methods=["GET"])
+def cotacoes():
+    """Recebe ?tickers=KNCR11,MXRF11,PETR4 e retorna cotações em tempo real"""
+    tickers_param = request.args.get("tickers", "")
+    if not tickers_param:
+        return jsonify({"erro": "Informe ?tickers=TICKER1,TICKER2"}), 400
+    tickers = [t.strip().upper() for t in tickers_param.split(",") if t.strip()]
+    resultado = {}
+    for ticker in tickers:
+        cotacao = buscar_cotacao_yahoo(ticker)
+        resultado[ticker] = cotacao if cotacao else {"ticker": ticker, "erro": "não encontrado"}
+    return jsonify({
+        "cotacoes": resultado,
+        "total": len(tickers),
+        "gerado_em": datetime.now(tz).strftime("%d/%m/%Y %H:%M:%S")
+    }), 200
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
     app.run(host="0.0.0.0", port=port)
