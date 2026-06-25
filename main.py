@@ -1,7 +1,16 @@
 """
 SIMONE — Atendente Autônoma da Envio CRED
-Versão 5.0 — Vendedora do Brasil
+Versão 5.1 — Vendedora do Brasil
 Atualizado: 25/06/2026
+
+Novidades v5.1:
+- Saudação por horário (bom dia/tarde/noite) + triagem de assunto
+- Silêncio inteligente: só responde se for sobre crédito/produto
+- Chave de segurança: #simone123 libera/silencia manualmente
+- FAQ embutido com respostas confiantes por produto
+- "Aguarde 2 minutos" quando não souber responder algo complexo
+- Concorrência: cada conversa é isolada por número (dict thread-safe)
+- Áudio no primeiro contato via ElevenLabs
 """
 
 from flask import Flask, request, jsonify
@@ -10,13 +19,14 @@ import requests
 import os
 import json
 import base64
+import re
+import time
 from datetime import datetime, timedelta
 import pytz
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
 
-# Timezone global
 tz = pytz.timezone("America/Sao_Paulo")
 
 EVOLUTION_API_URL  = os.environ.get("EVOLUTION_API_URL", "https://evolution-api-production-08787.up.railway.app")
@@ -28,6 +38,11 @@ ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
 # Voz da Simone — Larissa (melhor PT-BR disponível)
 SIMONE_VOICE_ID = "OjcGK1RXdMD1PFj2eIuN"
 
+# Chave de segurança para controle manual
+CHAVE_SEGURANCA    = "#simone123"
+CHAVE_SILENCIO     = "#silencio"
+CHAVE_RETOMAR      = "#retomar"
+
 GELADEIRA = ["vera", "sandra", "breno"]
 
 CONTATOS_VIP = {
@@ -38,15 +53,39 @@ MARCIO_NUMBERS = ['5583999628152', '558399628152', '5583991144899', '55839114489
 
 SUPERSIM_LINK = "susim.co/7+peoHFiNQsn8C1qFl0tCA=="
 
-# Vídeo de propaganda da Envio CRED no Google Drive
 VIDEO_PROPAGANDA_ID = "1hNYwJ4dLUdvBmrM0V5KUWJenrH9ylCKm"
 
 DASHBOARD_DATA = {"leads": [], "transacoes": [], "socios_arvore": []}
 
-# ── Controle de conversas ──────────────────────────────────────
+# Conversas isoladas por número — suporta múltiplos clientes simultâneos
 conversas = {}
 
-# ── Utilitários ───────────────────────────────────────────────
+# ── Palavras-chave que indicam interesse em produto financeiro ─────────────
+PALAVRAS_CREDITO = [
+    "empréstimo", "emprestimo", "crédito", "credito", "financiamento",
+    "dinheiro", "valor", "parcela", "prazo", "taxa", "juros",
+    "negativado", "spc", "serasa", "limpo", "nome limpo",
+    "imóvel", "imovel", "carro", "veículo", "veiculo", "garantia",
+    "pix", "transferência", "transferencia", "simular", "simulação",
+    "liberação", "liberacao", "aprovação", "aprovacao", "contrato",
+    "banco", "inter", "nubank", "quanto", "preciso", "quero", "urgente",
+    "ajuda", "solução", "solucao", "proposta", "renegociar",
+]
+
+# ── Utilitários gerais ────────────────────────────────────────────────────
+
+def saudacao_horario():
+    hora = datetime.now(tz).hour
+    if 5 <= hora < 12:
+        return "Bom dia"
+    elif 12 <= hora < 18:
+        return "Boa tarde"
+    else:
+        return "Boa noite"
+
+def eh_sobre_credito(texto):
+    t = texto.lower()
+    return any(p in t for p in PALAVRAS_CREDITO)
 
 def eh_contato_vip(numero):
     for num_vip, nome_vip in CONTATOS_VIP.items():
@@ -55,7 +94,6 @@ def eh_contato_vip(numero):
     return None
 
 def registrar_no_dashboard(tipo, dados):
-    tz = pytz.timezone("America/Sao_Paulo")
     dados["data_registro"] = datetime.now(tz).strftime("%d/%m/%Y %H:%M")
     dados["tipo"] = tipo
     if tipo == "lead":
@@ -114,7 +152,7 @@ def gerar_audio_simone(texto):
         }
     }
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=20)
+        r = requests.post(url, headers=headers, json=payload, timeout=25)
         if r.status_code == 200:
             return r.content
         print(f"[SIMONE] ElevenLabs erro: {r.status_code}")
@@ -127,19 +165,15 @@ def enviar_audio(numero, audio_bytes):
     audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
     url = f"{EVOLUTION_API_URL}/message/sendWhatsAppAudio/{EVOLUTION_INSTANCE}"
     headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
-    payload = {
-        "number": numero,
-        "audio": audio_b64,
-        "encoding": True
-    }
+    payload = {"number": numero, "audio": audio_b64, "encoding": True}
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=20)
+        r = requests.post(url, headers=headers, json=payload, timeout=25)
         return r.status_code in [200, 201]
     except Exception as e:
         print(f"[SIMONE] Erro ao enviar áudio: {e}")
         return False
 
-# ── Calculadora ───────────────────────────────────────────────
+# ── Calculadora ───────────────────────────────────────────────────────────
 
 TABELA_OFICIAL = [
     {"nc": 1, "v": 50},  {"nc": 2, "v": 80},  {"nc": 3, "v": 100},
@@ -148,7 +182,6 @@ TABELA_OFICIAL = [
 ]
 
 def calcular_operacao(nome, valor, taxa=20, prazo=30, num_contrato=1):
-    tz = pytz.timezone("America/Sao_Paulo")
     vencimento = (datetime.now(tz) + timedelta(days=prazo)).strftime("%d/%m/%Y")
     total = round(valor * (1 + taxa / 100), 2)
     lucro = round(total - valor, 2)
@@ -186,26 +219,27 @@ def calcular_operacao(nome, valor, taxa=20, prazo=30, num_contrato=1):
     return {"status": status, "bloqueado": bloqueado, "requer_aprovacao": requer_aprovacao,
             "script": script, "total": total, "vencimento": vencimento, "erros": erros}
 
-# ── Prompt da Simone ──────────────────────────────────────────
+# ── Prompt da Simone ──────────────────────────────────────────────────────
 
-def montar_system_prompt(calc_inject=""):
+def montar_system_prompt(saudacao, calc_inject=""):
     return f"""Você é Simone, consultora de crédito da Envio CRED. Atende 24 horas por dia, 7 dias por semana.
 
 IDENTIDADE:
-- Nome: Simone | Empresa: Envio CRED — correspondente de crédito
+- Nome: Simone | Empresa: Envio CRED — correspondente bancário autorizado
 - Tom: simpático, caloroso, confiante, humano — NUNCA robótico ou repetitivo
-- Você é a MELHOR VENDEDORA DE CRÉDITO DO BRASIL — apresenta soluções com entusiasmo genuíno
+- Você é a MELHOR VENDEDORA DE CRÉDITO DO BRASIL — apresenta soluções com entusiasmo genuíno e segurança total
 
 🚨 REGRAS QUE JAMAIS PODEM SER VIOLADAS:
 1. NUNCA faça mais de UMA pergunta por mensagem — siga a ordem do fluxo, uma de cada vez
 2. NUNCA repita dados sensíveis do cliente (CPF, RG, PIX) — confirme apenas: "Recebido ✅"
 3. NUNCA use o mesmo emoji duas vezes na mesma mensagem
-4. NUNCA diga "não posso", "não consigo" — sempre redirecione positivamente
+4. NUNCA diga "não sei", "não posso", "não consigo" — sempre redirecione positivamente
 5. NUNCA repita informação que o cliente já deu — avance direto pro próximo passo
 6. NUNCA aprove ou negue crédito sem resultado da Calculadora
 7. NUNCA invente ou altere valores, taxas ou datas
 8. NUNCA revele comissões ou que usa parceiros externos
 9. NUNCA mencione os nomes "SuperSim" ou "Creditas" — fale "nosso parceiro" ou "nossa solução"
+10. NUNCA responda sobre assuntos que não sejam crédito, empréstimo ou produtos da Envio CRED
 
 ✍️ ESTILO DE ESCRITA — OBRIGATÓRIO:
 - Use SEMPRE pontuação completa: vírgulas, pontos, reticências — elas criam pausas naturais
@@ -213,10 +247,19 @@ IDENTIDADE:
 - Respostas curtas: máximo 3 frases por mensagem
 - No máximo 1 emoji por mensagem, sempre variando
 - Português informal e caloroso, nunca parecer script
+- Saudação atual: use "{saudacao}" no primeiro contato do dia com o cliente
+
+🕐 SAUDAÇÃO POR HORÁRIO — OBRIGATÓRIO NO PRIMEIRO CONTATO:
+- Sempre inicie com "{saudacao}! Posso te ajudar?"
+- Aguarde a resposta antes de avançar
+- Se for sobre crédito/empréstimo/produto → entre em ação normalmente
+- Se for outro assunto (briga, desabafo, curiosidade, spam) → responda apenas:
+  "{saudacao}! Aqui é a Simone, da Envio CRED. Só consigo ajudar com assuntos de crédito e empréstimo. 😊"
+  E fique em silêncio até o cliente mencionar crédito.
 
 🏦 PORTFÓLIO ENVIO CRED — CONHEÇA PARA VENDER:
 
-1️⃣ EMPRÉSTIMO PESSOAL (para negativados e nome limpo):
+1️⃣ EMPRÉSTIMO PESSOAL (negativados e nome limpo):
    - Rápido, sem burocracia, direto pelo celular
    - Valor: R$ 50 a R$ 500 (aprovação na hora)
    - Para quem precisa de dinheiro rápido
@@ -225,7 +268,7 @@ IDENTIDADE:
    - Juros a partir de 1,49% ao mês
    - De R$ 5.000 até R$ 150.000
    - Até 60 meses para pagar
-   - Aceita carro financiado — cliente continua usando o veículo normalmente
+   - Aceita carro financiado — cliente continua usando normalmente
    - Nome limpo exigido
 
 3️⃣ EMPRÉSTIMO COM GARANTIA DE IMÓVEL — Home Equity:
@@ -233,108 +276,138 @@ IDENTIDADE:
    - De R$ 50.000 até R$ 3.000.000
    - Até 240 meses para pagar (20 anos!)
    - Aceita imóvel financiado (desde que 50% quitado)
-   - Cliente continua morando no imóvel normalmente
+   - Cliente continua morando normalmente
    - Nome limpo exigido
 
 4️⃣ FINANCIAMENTO DE VEÍCULO:
    - Compra de carro novo ou usado (até de particular)
-   - Simula em até 5 bancos (Itaú, Santander, Bradesco, Porto Bank)
+   - Simula em até 5 bancos: Itaú, Santander, Bradesco, Porto Bank
    - Parcelas que cabem no bolso
    - Nome limpo exigido
 
 5️⃣ CARTA DE CRÉDITO:
-   - Crédito para compra planejada (imóvel, carro, reforma)
+   - Crédito para compra planejada: imóvel, carro, reforma
    - Processo via consórcio ou carta contemplada
    - Nome limpo exigido
 
-📋 FLUXO OBRIGATÓRIO — SIGA ESTA ORDEM:
+❓ FAQ — RESPOSTAS PRONTAS COM CONFIANÇA (use quando o cliente perguntar):
 
-PASSO 1 — PRIMEIRO CONTATO:
-→ O vídeo já foi enviado automaticamente. Quando o cliente responder qualquer coisa, diga:
-"Oi! Que bom que você entrou em contato. 😊 Aqui é a Simone, da Envio CRED! Temos as melhores soluções de crédito do mercado. Posso te conhecer melhor? Qual é o seu nome completo?"
+P: "Quanto tempo demora?"
+R: "Nosso processo é super rápido! Para empréstimo pessoal, a resposta sai na hora. Para crédito com garantia, em até 48 horas. 🚀"
 
-PASSO 2 — NOME → perguntar valor:
+P: "Tem juros altos?"
+R: "Temos as melhores taxas do mercado! Empréstimo com garantia de imóvel sai a partir de 1,09% ao mês — bem abaixo dos bancos tradicionais. 💰"
+
+P: "Precisa de comprovante?"
+R: "Para valores pequenos, não exigimos comprovante. Para crédito maior, pedimos apenas um documento básico. 📋"
+
+P: "É seguro? É confiável?"
+R: "Somos correspondentes bancários autorizados e trabalhamos com os maiores parceiros financeiros do Brasil. Pode confiar! ✅"
+
+P: "Aceita negativado?"
+R: "Sim! Tenho soluções especiais mesmo com restrição no nome — rápido, sem burocracia, direto pelo celular. 💪"
+
+P: "Qual o valor mínimo/máximo?"
+R: "Depende do produto! Empréstimo pessoal: R$ 50 a R$ 500. Com garantia de imóvel: até R$ 3 milhões. Qual é o seu perfil? 🎯"
+
+P: "Como funciona o empréstimo com garantia?"
+R: "Você usa seu imóvel ou veículo como garantia e consegue taxas muito menores. Você continua morando ou usando o bem normalmente — só aparece no contrato como garantia. 🏠"
+
+P: "Posso simular antes?"
+R: "Claro! Me passa alguns dados e faço a simulação agora mesmo, sem compromisso. 😊"
+
+⏳ QUANDO NÃO SOUBER RESPONDER ALGO ESPECÍFICO:
+Nunca diga que não sabe. Diga SEMPRE:
+"Ótima pergunta! Deixa eu verificar essa informação com detalhes pra te dar uma resposta certinha... Aguarda só 2 minutinhos, tá? ⏳"
+→ Em seguida, responda com o que souber de forma confiante, ou redirecione pro fluxo de qualificação.
+
+📋 FLUXO DE QUALIFICAÇÃO — SIGA ESTA ORDEM (uma pergunta por vez):
+
+ETAPA 1 — PRIMEIRO CONTATO (após saudação inicial ser sobre crédito):
+"Que ótimo! 😊 Aqui é a Simone, da Envio CRED — temos as melhores soluções de crédito do mercado. Pode me dizer seu nome completo?"
+
+ETAPA 2 — NOME → valor:
 "Prazer, [primeiro nome]! Qual valor você está precisando?"
 
-PASSO 3 — VALOR → perguntar CPF:
+ETAPA 3 — VALOR → CPF:
 "Anotado! Qual é o seu CPF?"
 
-PASSO 4 — CPF → confirmar e perguntar renda:
+ETAPA 4 — CPF → renda:
 "CPF recebido. ✅ E qual é a sua renda mensal?"
 
-PASSO 5 — RENDA → perguntar situação do nome:
+ETAPA 5 — RENDA → situação do nome:
 "Ótimo! Seu nome está limpo no Serasa e SPC?"
 
-PASSO 6 — SITUAÇÃO DO NOME (PONTO DE QUALIFICAÇÃO):
+ETAPA 6 — SITUAÇÃO DO NOME (PONTO DE QUALIFICAÇÃO):
 
-→ Se NOME LIMPO: perguntar sobre garantias para oferecer o melhor produto:
-"Perfeito! 🎉 Com o nome limpo consigo te oferecer condições especiais. Você tem carro ou imóvel no seu nome?"
+→ Nome LIMPO → perguntar garantias:
+"Perfeito! 🎉 Com o nome limpo consigo condições especiais. Você tem carro ou imóvel no seu nome?"
 
-  → Se TEM IMÓVEL: apresentar Home Equity com entusiasmo:
+  → TEM IMÓVEL → Home Equity:
   "Que ótima notícia! Com seu imóvel como garantia, consigo crédito de até R$ 3 milhões com as menores taxas do mercado — a partir de 1,09% ao mês e até 240 meses pra pagar. Você continua morando lá normalmente! 🏠 Qual é o seu CEP?"
 
-  → Se TEM CARRO: apresentar Auto Equity:
+  → TEM CARRO → Auto Equity:
   "Perfeito! Com seu veículo como garantia, libero de R$ 5 mil a R$ 150 mil com taxas a partir de 1,49% ao mês — e você continua usando o carro! 🚗 Qual é o seu CEP?"
 
-  → Se TEM OS DOIS: oferecer o Home Equity (maior valor e menor taxa):
-  "Incrível! Você tem as melhores opções disponíveis. Com o imóvel como garantia consigo o crédito mais alto e a menor taxa do mercado. 🏆 Qual é o seu CEP?"
+  → TEM OS DOIS → Home Equity (maior valor):
+  "Incrível! Você tem as melhores opções. Com o imóvel consigo o crédito mais alto e a menor taxa do mercado. 🏆 Qual é o seu CEP?"
 
-  → Se NÃO TEM GARANTIA mas nome limpo:
+  → SEM GARANTIA → produto pessoal:
   "Tudo bem! Tenho uma solução rápida pra você. 💙 Qual é o seu CEP?"
 
-→ Se NEGATIVADO/SPC/SERASA:
+→ NEGATIVADO/SPC/SERASA:
 "Sem problema! Tenho uma solução especial que atende mesmo com restrição no nome — rápido, sem burocracia, direto pelo celular. 💪 Qual é o seu CEP?"
 
-PASSO 7 — CEP → perguntar e-mail:
+ETAPA 7 — CEP → e-mail:
 "Recebido! ✅ Qual é o seu e-mail?"
 
-PASSO 8 — E-MAIL → perguntar chave PIX (só se produto pessoal/calculadora):
-→ Se produto com garantia (Creditas): "Anotado! Já tenho tudo que preciso. Vou encaminhar sua solicitação agora. 🎯 Te retorno em instantes com o resultado!"
+ETAPA 8 — E-MAIL:
+→ Se produto com garantia (Creditas): "Anotado! Já tenho tudo que preciso. 🎯 Vou encaminhar com prioridade e te retorno em instantes!"
 → Se produto pessoal: "Anotado! Qual é a sua chave PIX?"
 
-PASSO 9 — PIX → perguntar parcelas:
+ETAPA 9 — PIX → parcelas:
 "Recebido! ✅ Em quantas vezes você quer pagar?"
 
-PASSO 10 — PARCELAS:
-"Perfeito, [primeiro nome]! Já tenho tudo. 🎉 Encaminhando sua solicitação agora para análise. Te retorno em instantes!"
-→ Após essa mensagem, PARE e aguarde — o sistema fará a análise nos bastidores.
+ETAPA 10 — PARCELAS:
+"Perfeito, [primeiro nome]! 🎉 Encaminhando sua solicitação agora para análise. Te retorno em instantes!"
+→ PARE aqui e aguarde o sistema processar.
 
-PASSO 11 — RESULTADO (sistema vai injetar abaixo):
-→ Se APROVADO calculadora: use o script exatamente como está
-→ Se AGUARDA MÁRCIO: use o script e aguarde liberação
-→ Se CREDITAS (garantia): "Ótima notícia, [nome]! 🏆 Sua solicitação foi encaminhada com prioridade. Em breve nosso time especializado entra em contato para finalizar. Você está a um passo do seu crédito!"
-→ Se REPROVADO: "Não desanima, [nome]! 💙 Tenho outra solução pra você. Nossa linha especial atende seu perfil. Já encaminhei — em instantes você recebe o retorno!"
+ETAPA 11 — RESULTADO (injetado pelo sistema abaixo):
+→ APROVADO: envie o script exatamente como está
+→ AGUARDA MÁRCIO: envie o script e aguarde
+→ CREDITAS: "Ótima notícia, [nome]! 🏆 Sua solicitação foi encaminhada com prioridade. Nosso time especializado entra em contato pra finalizar. Você está a um passo do seu crédito!"
+→ REPROVADO: "Não desanima, [nome]! 💙 Tenho outra solução pra você. Nossa linha especial atende seu perfil — já encaminhei e em instantes você recebe o retorno!"
 
-🚗 FINANCIAMENTO DE VEÍCULO — quando cliente mencionar "comprar carro", "financiamento":
+🚗 FINANCIAMENTO DE VEÍCULO — quando cliente mencionar "comprar carro" / "financiamento":
 "Que boa escolha! 🚗 Consigo simular em até 5 bancos diferentes pra você ter a menor parcela. Seu nome está limpo?"
-→ Se limpo: coletar dados normais e encaminhar pro Creditas Financiamento
-→ Se negativado: "Entendo... No momento o financiamento exige nome limpo. Mas posso te ajudar com crédito pessoal pra você se organizar antes! 💪"
+→ Nome limpo: coletar dados e encaminhar
+→ Negativado: "No momento o financiamento exige nome limpo. Mas posso te ajudar com crédito pessoal enquanto você se organiza! 💪"
 
 🚫 RECUSA FINAL — só quando tudo falhar:
-"Oi, [nome]! Fiz tudo que pude, mas no momento não encontramos uma solução para o seu perfil. Não desanima — quando sua situação mudar, pode voltar que a Envio CRED está aqui! 💙"
+"Fiz tudo que pude, mas no momento não encontrei uma solução para o seu perfil. Não desanima — quando sua situação mudar, a Envio CRED está aqui! 💙"
 
-GELADEIRA — ignorar silenciosamente: Vera, Sandra, Breno
+GELADEIRA — ignorar silenciosamente (não responder nada): Vera, Sandra, Breno
 
 📎 [cliente enviou documento/imagem] → "Recebi! ✅" e continue o fluxo
-🎙️ [cliente enviou áudio] → "Oi! Não consigo ouvir áudios, pode me mandar por texto? 😊"{calc_inject}"""
+🎙️ [cliente enviou áudio] → "Oi! Não consigo ouvir áudios, pode me mandar por texto? 😊"
+{calc_inject}"""
 
-# ── Geração de resposta via Groq ──────────────────────────────
+# ── Geração de resposta via Groq ──────────────────────────────────────────
 
-def gerar_resposta(mensagem_cliente, numero_cliente, historico):
+def gerar_resposta(mensagem_cliente, numero_cliente, historico, saudacao):
     calc_inject = ""
-
-    # Verificar se temos todos os dados para acionar calculadora (CPF limpo)
     historico_completo = historico + [{"role": "user", "content": mensagem_cliente}]
-    # ── Qualificação do lead ──────────────────────────────────────
+
+    # ── Qualificação do lead ──────────────────────────────────────────────
     tem_restricao = any(
         kw in m.get("content", "").lower()
         for m in historico_completo
-        for kw in ["spc", "serasa", "negativado", "restrição", "restricao", "sujo", "devendo"]
+        for kw in ["spc", "serasa", "negativado", "restrição", "restricao", "sujo", "devendo", "nome sujo"]
     )
     cpf_limpo = any(
         kw in m.get("content", "").lower()
         for m in historico_completo
-        for kw in ["limpa", "limpo", "não tenho", "nao tenho", "tô limpa", "to limpa", "nenhuma", "limpo sim", "tá limpo"]
+        for kw in ["limpa", "limpo", "não tenho", "nao tenho", "tô limpa", "to limpa", "nenhuma", "limpo sim", "tá limpo", "ta limpo"]
     )
     tem_imovel = any(
         kw in m.get("content", "").lower()
@@ -344,7 +417,7 @@ def gerar_resposta(mensagem_cliente, numero_cliente, historico):
     tem_veiculo = any(
         kw in m.get("content", "").lower()
         for m in historico_completo
-        for kw in ["carro", "veículo", "veiculo", "moto", "caminhão", "caminhao", "automóvel"]
+        for kw in ["carro", "veículo", "veiculo", "moto", "caminhão", "caminhao", "automóvel", "automóvel"]
     )
     quer_financiar = any(
         kw in m.get("content", "").lower()
@@ -352,58 +425,69 @@ def gerar_resposta(mensagem_cliente, numero_cliente, historico):
         for kw in ["financiamento", "financiar", "comprar carro", "comprar moto"]
     )
     tem_parcelas = any(
-        __import__("re").search(r'\b\d+\s*(vez|vezes|parcela|x)\b', m.get("content", "").lower())
+        re.search(r'\b\d+\s*(vez|vezes|parcela|x)\b', m.get("content", "").lower())
         for m in historico_completo
     )
 
-    if cpf_limpo and tem_parcelas:
-        import re
-        valor_lead = None
-        nome_lead = None
-        for m in historico_completo:
-            match = re.search(r'(\d+[\.,]?\d*)', m.get("content", ""))
-            if match and m.get("role") == "user":
+    # ── Extração de dados básicos ─────────────────────────────────────────
+    valor_lead = None
+    nome_lead  = None
+    for m in historico_completo:
+        txt = m.get("content", "")
+        if m.get("role") == "user":
+            match_val = re.search(r'R?\$?\s*(\d+[\.,]?\d*)', txt)
+            if match_val:
                 try:
-                    v = float(match.group(1).replace(",", "."))
-                    if 50 <= v <= 3000:
+                    v = float(match_val.group(1).replace(",", "."))
+                    if 50 <= v <= 500000:
                         valor_lead = v
                 except:
                     pass
-            if m.get("role") == "user" and 2 <= len(m["content"].split()) <= 5 and not any(c.isdigit() for c in m["content"]):
-                nome_lead = m["content"].strip()
+            palavras = txt.strip().split()
+            if 2 <= len(palavras) <= 5 and not any(c.isdigit() for c in txt):
+                nome_lead = txt.strip()
 
-        # Creditas — tem garantia e nome limpo
-        if cpf_limpo and (tem_imovel or tem_veiculo or quer_financiar):
-            produto = "Home Equity" if tem_imovel else ("Financiamento Veículo" if quer_financiar else "Auto Equity")
-            calc_inject = f"\n\n🏦 CREDITAS — LEAD QUALIFICADO\nProduto: {produto}\nEnvie mensagem de confirmação positiva e registre."
-            registrar_no_dashboard("lead", {
-                "nome": nome_lead or "Cliente", "telefone": numero_cliente,
-                "produto": f"Creditas {produto}", "status": "qualificado",
-                "origem": "WhatsApp (Simone)"
+    # ── Roteamento: Creditas (com garantia + nome limpo) ─────────────────
+    if cpf_limpo and (tem_imovel or tem_veiculo or quer_financiar) and tem_parcelas:
+        produto = "Home Equity" if tem_imovel else ("Financiamento Veículo" if quer_financiar else "Auto Equity")
+        calc_inject = f"\n\n🏦 SISTEMA — LEAD CREDITAS QUALIFICADO\nProduto recomendado: {produto}\nEnvie mensagem de confirmação entusiasmada e registre internamente."
+        registrar_no_dashboard("lead", {
+            "nome": nome_lead or "Cliente", "telefone": numero_cliente,
+            "produto": f"Creditas {produto}", "status": "qualificado",
+            "origem": "WhatsApp (Simone)"
+        })
+        notificar_marcio(
+            f"🏦 LEAD CREDITAS QUALIFICADO!\n"
+            f"Produto: {produto}\n"
+            f"Nome: {nome_lead or 'Ver conversa'}\n"
+            f"Telefone: {numero_cliente}\n"
+            f"➡️ Acesso ao portal Creditas pendente — registrar e acompanhar."
+        )
+
+    # ── Roteamento: Calculadora (produto pessoal, qualquer situação) ──────
+    elif cpf_limpo and tem_parcelas and valor_lead and nome_lead:
+        calc = calcular_operacao(nome=nome_lead, valor=valor_lead)
+        if calc["status"] == "APROVADA":
+            calc_inject = f"\n\n🧮 SISTEMA — ✅ APROVADA\nScript exato:\n---\n{calc['script']}\n---\nEnvie EXATAMENTE este script, sem alterar nada."
+            registrar_no_dashboard("transacao", {
+                "nome": nome_lead, "produto": "Crédito Pessoal",
+                "valor": valor_lead, "total": calc["total"], "status": "aprovado"
             })
+            registrar_no_dashboard("lead", {
+                "nome": nome_lead, "telefone": numero_cliente,
+                "produto": "Crédito Pessoal", "valor": valor_lead, "status": "aprovado"
+            })
+        elif calc["status"] == "AGUARDA_MARCIO":
+            calc_inject = f"\n\n🧮 SISTEMA — ⚠️ AGUARDA MÁRCIO\nScript:\n---\n{calc['script']}\n---\nEnvie e aguarde aprovação."
             notificar_marcio(
-                f"🏦 LEAD CREDITAS!\n"
-                f"Produto: {produto}\n"
-                f"Nome: {nome_lead or 'Ver conversa'}\n"
-                f"Telefone: {numero_cliente}\n"
-                f"➡️ Aguardar acesso ao portal Creditas!"
+                f"⚠️ Lead aguardando aprovação!\n"
+                f"Nome: {nome_lead}\nValor: R${valor_lead}\nTelefone: {numero_cliente}"
             )
+        elif calc["status"] == "BLOQUEADA":
+            calc_inject = f"\n\n🧮 SISTEMA — ❌ BLOQUEADA\nMotivo: {' | '.join(calc['erros'])}\nNÃO avance com produto pessoal. Redirecione positivamente para parceiro."
 
-        # Calculadora — produto pessoal (sem garantia, qualquer situação)
-        elif valor_lead and nome_lead:
-            calc = calcular_operacao(nome=nome_lead, valor=valor_lead)
-            if calc["status"] == "APROVADA":
-                calc_inject = f"\n\n🧮 CALCULADORA — ✅ APROVADA\nScript:\n---\n{calc['script']}\n---\nEnvie EXATAMENTE este script agora."
-                registrar_no_dashboard("transacao", {"nome": nome_lead, "produto": "Crédito Pessoal", "valor": valor_lead, "total": calc["total"], "status": "aprovado"})
-                registrar_no_dashboard("lead", {"nome": nome_lead, "telefone": numero_cliente, "produto": "Crédito Pessoal", "valor": valor_lead, "status": "aprovado"})
-            elif calc["status"] == "AGUARDA_MARCIO":
-                calc_inject = f"\n\n🧮 CALCULADORA — ⚠️ AGUARDA MÁRCIO\nScript:\n---\n{calc['script']}\n---\nEnvie e aguarde Márcio liberar."
-                notificar_marcio(f"Lead aguardando aprovação!\nNome: {nome_lead}\nValor: R${valor_lead}\nTelefone: {numero_cliente}")
-            elif calc["status"] == "BLOQUEADA":
-                calc_inject = f"\n\n🧮 CALCULADORA — ❌ BLOQUEADA\nMotivo: {' | '.join(calc['erros'])}\nNÃO avance com produto pessoal. Encaminhe pro parceiro positivamente."
-
+    # ── SuperSim (negativado + dados completos) ───────────────────────────
     if tem_restricao and tem_parcelas:
-        import re
         dados_coletados = {}
         for m in historico_completo:
             if m.get("role") == "user":
@@ -419,7 +503,7 @@ def gerar_resposta(mensagem_cliente, numero_cliente, historico):
 
         notificar_marcio(
             f"🔥 LEAD SUPER SIM — NEGATIVADO!\n"
-            f"Nome: {dados_coletados.get('nome', 'ver conversa')}\n"
+            f"Nome: {nome_lead or 'ver conversa'}\n"
             f"Telefone: {numero_cliente}\n"
             f"CPF: {dados_coletados.get('cpf', 'ver conversa')}\n"
             f"CEP: {dados_coletados.get('cep', 'ver conversa')}\n"
@@ -427,29 +511,30 @@ def gerar_resposta(mensagem_cliente, numero_cliente, historico):
             f"➡️ Preencher no Super Sim agora!"
         )
 
-    system_prompt = montar_system_prompt(calc_inject)
+    system_prompt = montar_system_prompt(saudacao, calc_inject)
 
     headers_req = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     messages = [{"role": "system", "content": system_prompt}]
-    messages.extend(historico[-12:])
+    messages.extend(historico[-14:])
     messages.append({"role": "user", "content": mensagem_cliente})
 
     payload = {
         "model": "llama-3.3-70b-versatile",
         "messages": messages,
-        "max_tokens": 300,
+        "max_tokens": 350,
         "temperature": 0.65
     }
 
     try:
-        r = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers_req, json=payload, timeout=15)
+        r = requests.post("https://api.groq.com/openai/v1/chat/completions",
+                          headers=headers_req, json=payload, timeout=15)
         data = r.json()
         return data["choices"][0]["message"]["content"].strip()
     except Exception as e:
         print(f"[SIMONE] Erro Groq: {e}")
         return "Oi! 😊 Estou verificando aqui, te retorno em instantes!"
 
-# ── Webhook principal ─────────────────────────────────────────
+# ── Webhook principal ─────────────────────────────────────────────────────
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -471,39 +556,43 @@ def webhook():
         remote_jid = key.get("remoteJid", "")
         numero_cliente = remote_jid.replace("@s.whatsapp.net", "").replace("@g.us", "")
 
+        # Ignorar grupos
         if "@g.us" in remote_jid:
             return jsonify({"status": "ignored"}), 200
 
         message = msg_data.get("message", {})
 
+        # Ignorar reações e stickers
         if "reactionMessage" in message or "stickerMessage" in message:
             return jsonify({"status": "ignored"}), 200
 
         push_name = msg_data.get("pushName", "") or ""
         nome_lower = push_name.lower()
 
-        # Geladeira
+        # ── Geladeira ────────────────────────────────────────────────────
         for bloqueado in GELADEIRA:
             if bloqueado in nome_lower:
                 return jsonify({"status": "geladeira"}), 200
 
-        # Márcio
-        numero_limpo = numero_cliente.replace("+","").replace("-","").replace(" ","")
+        # ── Márcio ───────────────────────────────────────────────────────
+        numero_limpo = numero_cliente.replace("+", "").replace("-", "").replace(" ", "")
         if any(numero_limpo.endswith(n[-9:]) or numero_limpo == n for n in MARCIO_NUMBERS):
             return jsonify({"status": "marcio_silencio"}), 200
 
-        # VIP
+        # ── VIP ──────────────────────────────────────────────────────────
         nome_vip = eh_contato_vip(numero_cliente)
         if nome_vip:
-            msg_vip = f"Parceiro/empresa:\nDe: {nome_vip} ({push_name})\nNúmero: {numero_cliente}\nMsg: {message.get('conversation','')}"
+            msg_vip = (f"Parceiro/empresa:\nDe: {nome_vip} ({push_name})\n"
+                       f"Número: {numero_cliente}\nMsg: {message.get('conversation','')}")
             enviar_texto(MARCIO_NUMBERS[0], msg_vip)
-            enviar_texto(numero_cliente, "Olá! Sua mensagem foi encaminhada ao responsável da Envio CRED. Em breve você recebe um retorno!")
+            enviar_texto(numero_cliente,
+                         "Olá! Sua mensagem foi encaminhada ao responsável da Envio CRED. Em breve você recebe um retorno!")
             return jsonify({"status": "vip_encaminhado"}), 200
 
-        # Montar texto recebido
-        eh_documento = "documentMessage" in message
-        eh_imagem = "imageMessage" in message
-        eh_audio_cliente = "audioMessage" in message
+        # ── Montar texto recebido ─────────────────────────────────────────
+        eh_documento   = "documentMessage" in message
+        eh_imagem      = "imageMessage" in message
+        eh_audio_cli   = "audioMessage" in message
 
         texto_recebido = (
             message.get("conversation") or
@@ -512,37 +601,59 @@ def webhook():
 
         if eh_documento or eh_imagem:
             tipo = "documento" if eh_documento else "imagem"
-            caption = message.get("documentMessage", {}).get("caption") or message.get("imageMessage", {}).get("caption") or ""
+            caption = (message.get("documentMessage", {}).get("caption") or
+                       message.get("imageMessage", {}).get("caption") or "")
             texto_recebido = f"[cliente enviou {tipo} como comprovante] {caption}".strip()
 
-        if eh_audio_cliente:
+        if eh_audio_cli:
             texto_recebido = "[cliente enviou áudio]"
 
         if not texto_recebido.strip():
             return jsonify({"status": "ignored"}), 200
 
-        # Controle de silêncio manual
-        if numero_cliente in conversas and conversas[numero_cliente].get("silencio"):
-            if texto_recebido.strip().lower() in ["#retomar", "#eva", "#simone"]:
-                conversas[numero_cliente]["silencio"] = False
-                enviar_texto(numero_cliente, "Olá! Estou de volta. 😊 Como posso te ajudar?")
-            return jsonify({"status": "silencio"}), 200
-
-        if texto_recebido.strip().lower() in ["#silencio", "#silêncio"]:
-            if numero_cliente in conversas:
-                conversas[numero_cliente]["silencio"] = True
-            return jsonify({"status": "silencio_ativado"}), 200
-
         print(f"[SIMONE] De: {push_name} ({numero_cliente}): {texto_recebido[:80]}")
 
-        # Novo lead
+        # ── Chave de segurança — controle manual ─────────────────────────
+        txt_lower = texto_recebido.strip().lower()
+
+        # Ativar silêncio com chave
+        if txt_lower in [CHAVE_SILENCIO, f"{CHAVE_SEGURANCA} silencio", f"{CHAVE_SEGURANCA} silêncio"]:
+            conversas.setdefault(numero_cliente, {"historico": [], "silencio": False, "video_enviado": False, "primeiro_msg_sobre_credito": False})
+            conversas[numero_cliente]["silencio"] = True
+            return jsonify({"status": "silencio_ativado"}), 200
+
+        # Retomar com chave
+        if txt_lower in [CHAVE_RETOMAR, f"{CHAVE_SEGURANCA} retomar"]:
+            if numero_cliente in conversas:
+                conversas[numero_cliente]["silencio"] = False
+            enviar_texto(numero_cliente, "Olá! Estou de volta. 😊 Como posso te ajudar?")
+            return jsonify({"status": "retomado"}), 200
+
+        # Resetar conversa com chave
+        if txt_lower == f"{CHAVE_SEGURANCA} resetar":
+            if numero_cliente in conversas:
+                del conversas[numero_cliente]
+            return jsonify({"status": "conversa_resetada"}), 200
+
+        # ── Controle de silêncio ──────────────────────────────────────────
+        if numero_cliente in conversas and conversas[numero_cliente].get("silencio"):
+            return jsonify({"status": "silencio"}), 200
+
+        saudacao = saudacao_horario()
+
+        # ── Novo lead ────────────────────────────────────────────────────
         primeiro_contato = numero_cliente not in conversas
         if primeiro_contato:
-            conversas[numero_cliente] = {"historico": [], "silencio": False, "video_enviado": False}
+            conversas[numero_cliente] = {
+                "historico": [],
+                "silencio": False,
+                "video_enviado": False,
+                "primeiro_msg_sobre_credito": False
+            }
             registrar_no_dashboard("lead", {
                 "nome": push_name or "Desconhecido",
                 "telefone": numero_cliente,
-                "produto": "Em qualificação",
+                "produto": "Em triagem",
                 "status": "novo",
                 "origem": "WhatsApp (Simone)"
             })
@@ -550,29 +661,64 @@ def webhook():
         estado = conversas[numero_cliente]
         historico = estado["historico"]
 
-        # Enviar vídeo no primeiro contato
-        if primeiro_contato and not estado.get("video_enviado"):
+        # ── Triagem de assunto no PRIMEIRO contato ────────────────────────
+        # Se for a primeira mensagem e NÃO for sobre crédito, Simone saúda e fica
+        # em modo de espera — não entra no fluxo de qualificação ainda.
+        if primeiro_contato and not eh_sobre_credito(texto_recebido):
+            estado["aguardando_assunto"] = True
+            resposta_triagem = (
+                f"{saudacao}! Aqui é a Simone, da Envio CRED. 😊\n"
+                f"Posso te ajudar?"
+            )
+            # Áudio na saudação inicial
+            if ELEVENLABS_API_KEY:
+                audio = gerar_audio_simone(resposta_triagem)
+                if audio and enviar_audio(numero_cliente, audio):
+                    historico.append({"role": "user",    "content": texto_recebido})
+                    historico.append({"role": "assistant","content": resposta_triagem})
+                    return jsonify({"status": "ok", "tipo": "audio_triagem"}), 200
+            enviar_texto(numero_cliente, resposta_triagem)
+            historico.append({"role": "user",    "content": texto_recebido})
+            historico.append({"role": "assistant","content": resposta_triagem})
+            return jsonify({"status": "ok", "tipo": "triagem"}), 200
+
+        # Se estava aguardando assunto e ainda não é sobre crédito → silêncio educado
+        if estado.get("aguardando_assunto") and not eh_sobre_credito(texto_recebido):
+            resposta_fora = (
+                f"Aqui na Envio CRED eu só consigo ajudar com crédito e empréstimo. "
+                f"Se precisar, é só me chamar! 💙"
+            )
+            enviar_texto(numero_cliente, resposta_fora)
+            historico.append({"role": "user",    "content": texto_recebido})
+            historico.append({"role": "assistant","content": resposta_fora})
+            return jsonify({"status": "ok", "tipo": "fora_escopo"}), 200
+
+        # Assunto confirmado como crédito — desativa triagem
+        estado["aguardando_assunto"] = False
+
+        # ── Enviar vídeo no primeiro contato sobre crédito ────────────────
+        if not estado.get("video_enviado"):
             video_url = f"https://drive.google.com/uc?export=download&id={VIDEO_PROPAGANDA_ID}"
             enviou = enviar_video_url(numero_cliente, video_url)
             estado["video_enviado"] = True
             print(f"[SIMONE] Vídeo enviado para {numero_cliente}: {enviou}")
-            import time
             time.sleep(2)
 
-        # Gerar e enviar resposta
-        resposta_texto = gerar_resposta(texto_recebido, numero_cliente, historico)
+        # ── Gerar e enviar resposta ───────────────────────────────────────
+        resposta_texto = gerar_resposta(texto_recebido, numero_cliente, historico, saudacao)
 
-        historico.append({"role": "user", "content": texto_recebido})
-        historico.append({"role": "assistant", "content": resposta_texto})
-        if len(historico) > 24:
-            conversas[numero_cliente]["historico"] = historico[-24:]
+        historico.append({"role": "user",    "content": texto_recebido})
+        historico.append({"role": "assistant","content": resposta_texto})
+        if len(historico) > 28:
+            conversas[numero_cliente]["historico"] = historico[-28:]
 
-        # Primeiro contato = áudio; demais = texto
-        if primeiro_contato and ELEVENLABS_API_KEY:
+        # Áudio no primeiro contato sobre crédito; texto nos demais
+        if not estado.get("audio_inicial_enviado") and ELEVENLABS_API_KEY:
             audio = gerar_audio_simone(resposta_texto)
             if audio:
                 sucesso = enviar_audio(numero_cliente, audio)
                 if sucesso:
+                    estado["audio_inicial_enviado"] = True
                     print(f"[SIMONE] Áudio enviado para {numero_cliente}")
                     return jsonify({"status": "ok", "tipo": "audio"}), 200
             print("[SIMONE] Fallback para texto")
@@ -587,19 +733,19 @@ def webhook():
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# ── Dashboard ─────────────────────────────────────────────────
+# ── Dashboard ─────────────────────────────────────────────────────────────
 
 @app.route("/", methods=["GET"])
 def health():
-    tz = pytz.timezone("America/Sao_Paulo")
     now = datetime.now(tz).strftime("%d/%m/%Y %H:%M")
     return jsonify({
         "status": "Simone online 24h/7d 🤖",
-        "versao": "5.0",
+        "versao": "5.1",
         "agora": now,
         "groq": bool(GROQ_API_KEY),
         "elevenlabs": bool(ELEVENLABS_API_KEY),
-        "endpoints": ["/webhook", "/dashboard/dados", "/dashboard/lead", "/dashboard/socio"]
+        "conversas_ativas": len(conversas),
+        "endpoints": ["/webhook", "/dashboard/dados", "/dashboard/lead", "/dashboard/socio", "/cotacoes"]
     }), 200
 
 @app.route("/dashboard/dados", methods=["GET"])
@@ -612,7 +758,11 @@ def dashboard_dados():
             "leads": len(DASHBOARD_DATA["leads"]),
             "transacoes": len(DASHBOARD_DATA["transacoes"]),
             "socios_arvore": len(DASHBOARD_DATA["socios_arvore"]),
-            "receita": sum(t.get("total", 0) - t.get("valor", 0) for t in DASHBOARD_DATA["transacoes"] if t.get("status") == "aprovado")
+            "receita": sum(
+                t.get("total", 0) - t.get("valor", 0)
+                for t in DASHBOARD_DATA["transacoes"]
+                if t.get("status") == "aprovado"
+            )
         }
     }), 200
 
@@ -628,18 +778,16 @@ def dashboard_socio():
     registrar_no_dashboard("socio_arvore", dados)
     return jsonify({"status": "ok"}), 200
 
-# ── Cotações em tempo real (Yahoo Finance) ─────────────────────
+# ── Cotações em tempo real (Yahoo Finance) ────────────────────────────────
 _cache_cotacoes = {}
 _cache_ts = {}
 
 def buscar_cotacao_yahoo(ticker):
-    """Busca cotação real no Yahoo Finance. Ticker BR: KNCR11 → KNCR11.SA"""
     agora = datetime.now(tz).timestamp()
     if ticker in _cache_cotacoes and agora - _cache_ts.get(ticker, 0) < 300:
         return _cache_cotacoes[ticker]
     try:
-        symbol = ticker if "." in ticker else (ticker + ".SA" if len(ticker) == 6 and ticker.isalpha() == False else ticker)
-        # Tenta com .SA primeiro (B3), depois sem
+        symbol = ticker if "." in ticker else (ticker + ".SA" if not ticker[-1].isalpha() == False else ticker)
         for sym in [symbol, ticker]:
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=1d"
             r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
@@ -650,8 +798,7 @@ def buscar_cotacao_yahoo(ticker):
                 if preco:
                     variacao = meta.get("regularMarketChangePercent", 0)
                     resultado = {
-                        "ticker": ticker,
-                        "symbol": sym,
+                        "ticker": ticker, "symbol": sym,
                         "preco": round(float(preco), 2),
                         "variacao_pct": round(float(variacao), 2),
                         "moeda": meta.get("currency", "BRL"),
@@ -667,7 +814,6 @@ def buscar_cotacao_yahoo(ticker):
 
 @app.route("/cotacoes", methods=["GET"])
 def cotacoes():
-    """Recebe ?tickers=KNCR11,MXRF11,PETR4 e retorna cotações em tempo real"""
     tickers_param = request.args.get("tickers", "")
     if not tickers_param:
         return jsonify({"erro": "Informe ?tickers=TICKER1,TICKER2"}), 400
