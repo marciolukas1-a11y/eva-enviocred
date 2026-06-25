@@ -16,6 +16,9 @@ import pytz
 app = Flask(__name__)
 CORS(app)
 
+# Timezone global
+tz = pytz.timezone("America/Sao_Paulo")
+
 EVOLUTION_API_URL  = os.environ.get("EVOLUTION_API_URL", "https://evolution-api-production-08787.up.railway.app")
 EVOLUTION_API_KEY  = os.environ.get("EVOLUTION_API_KEY", "")
 EVOLUTION_INSTANCE = os.environ.get("EVOLUTION_INSTANCE", "enviocred2")
