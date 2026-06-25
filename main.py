@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 import pytz
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
 
 # Timezone global
 tz = pytz.timezone("America/Sao_Paulo")
