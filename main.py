@@ -542,8 +542,6 @@ def dashboard_socio():
     return jsonify({"status": "ok"}), 200
 
 # ── Cotações em tempo real (Yahoo Finance) ─────────────────────
-import re as _re
-
 _cache_cotacoes = {}
 _cache_ts = {}
 
