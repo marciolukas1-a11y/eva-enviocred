@@ -1,9 +1,9 @@
 """
 SIMONE — Atendente Autônoma da Envio CRED
-Versão 5.1 — Vendedora do Brasil
+Versão 5.2 — Vendedora do Brasil
 Atualizado: 25/06/2026
 
-Novidades v5.1:
+Novidades v5.2:
 - Saudação por horário (bom dia/tarde/noite) + triagem de assunto
 - Silêncio inteligente: só responde se for sobre crédito/produto
 - Chave de segurança: #simone123 libera/silencia manualmente
@@ -11,6 +11,10 @@ Novidades v5.1:
 - "Aguarde 2 minutos" quando não souber responder algo complexo
 - Concorrência: cada conversa é isolada por número (dict thread-safe)
 - Áudio no primeiro contato via ElevenLabs
+- Contratos ativos persistidos em JSON
+- Reconhecimento automático de devedor ao receber mensagem
+- Cobrança automática por vencimento com tom amigável
+- Endpoints: /contratos /contratos/novo /contratos/cobrar /contratos/pago
 """
 
 from flask import Flask, request, jsonify
@@ -864,7 +868,7 @@ def health():
     now = datetime.now(tz).strftime("%d/%m/%Y %H:%M")
     return jsonify({
         "status": "Simone online 24h/7d 🤖",
-        "versao": "5.1",
+        "versao": "5.2",
         "agora": now,
         "groq": bool(GROQ_API_KEY),
         "elevenlabs": bool(ELEVENLABS_API_KEY),
