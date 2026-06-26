@@ -3,5 +3,16 @@
     "contrato_id": "SI-LOCAL",
     "nome": "Teste Local",
     "status": "ativo"
+  },
+  "5583999628152": {
+    "nome": "Teste Marcio",
+    "valor": 200,
+    "total": 240,
+    "vencimento": "05/07/2026",
+    "status": "ativo",
+    "contrato_id": "SI-M001",
+    "pix": "83991144899",
+    "data_registro": "25/06/2026 21:55",
+    "cobranças_enviadas": 0
   }
 }
