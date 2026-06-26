@@ -990,7 +990,7 @@ def health():
     now = datetime.now(tz).strftime("%d/%m/%Y %H:%M")
     return jsonify({
         "status": "Simone online 24h/7d 🤖",
-        "versao": "5.2",
+        "versao": "5.3",
         "agora": now,
         "groq": bool(GROQ_API_KEY),
         "elevenlabs": bool(ELEVENLABS_API_KEY),
