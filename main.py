@@ -147,6 +147,34 @@ def verificar_vencimentos():
 # Carrega contratos na inicialização
 CONTRATOS = carregar_contratos()
 
+# ── Banco de comissões SuperSim ───────────────────────────────────────────
+COMISSOES_FILE = "db/comissoes.json"
+
+def carregar_comissoes():
+    try:
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{COMISSOES_FILE}"
+        r = requests.get(url, headers=_gh_headers(), timeout=10)
+        if r.status_code == 200:
+            import base64 as b64
+            return json.loads(b64.b64decode(r.json()["content"]).decode("utf-8"))
+    except: pass
+    return []
+
+def salvar_comissoes(lista):
+    try:
+        import base64 as b64
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{COMISSOES_FILE}"
+        r = requests.get(url, headers=_gh_headers(), timeout=10)
+        sha = r.json().get("sha") if r.status_code == 200 else None
+        conteudo = b64.b64encode(json.dumps(lista, ensure_ascii=False, indent=2).encode()).decode()
+        payload = {"message": f"db: comissoes {datetime.now(tz).strftime('%d/%m/%Y %H:%M')}", "content": conteudo}
+        if sha: payload["sha"] = sha
+        requests.put(url, headers=_gh_headers(), json=payload, timeout=10)
+    except Exception as e:
+        print(f"[COMISSOES] Erro ao salvar: {e}")
+
+COMISSOES = carregar_comissoes()
+
 # Conversas isoladas por número — suporta múltiplos clientes simultâneos
 conversas = {}
 
@@ -1154,6 +1182,56 @@ def disparar_cobrancas():
         "total_alertas": len(alertas),
         "contratos": [a["contrato"]["contrato_id"] for a in alertas]
     }), 200
+
+
+# ── Endpoints de Comissões SuperSim ──────────────────────────────────────
+@app.route("/comissoes", methods=["GET"])
+def listar_comissoes():
+    return jsonify({"comissoes": COMISSOES, "total": len(COMISSOES)}), 200
+
+@app.route("/comissoes/nova", methods=["POST"])
+def nova_comissao():
+    """Registra nova comissão após lead aprovado na SuperSim."""
+    global COMISSOES
+    dados = request.json or {}
+    from datetime import datetime as dt, timedelta
+    agora = datetime.now(tz)
+    # Prazo padrão SuperSim: 30 dias
+    prazo = agora + timedelta(days=int(dados.get("prazo_dias", 30)))
+    comissao = {
+        "id":            f"CM-{agora.strftime('%d%m%Y%H%M%S')}",
+        "data":          agora.strftime("%d/%m/%Y"),
+        "cliente":       dados.get("cliente", "Desconhecido"),
+        "telefone":      dados.get("telefone", ""),
+        "valor":         dados.get("valor", 50),
+        "status":        "aguardando",
+        "prazo_iso":     prazo.isoformat(),
+        "prazo_display": prazo.strftime("%d/%m/%Y"),
+        "plataforma":    dados.get("plataforma", "SuperSim")
+    }
+    COMISSOES.append(comissao)
+    salvar_comissoes(COMISSOES)
+    notificar_marcio(f"💰 Nova comissão registrada!\nCliente: {comissao['cliente']}\nValor: R${comissao['valor']}\nPrazo: {comissao['prazo_display']}")
+    return jsonify({"status": "ok", "comissao": comissao}), 200
+
+@app.route("/comissoes/<comissao_id>/pagar", methods=["POST"])
+def pagar_comissao(comissao_id):
+    """Marca comissão como paga (PG)."""
+    global COMISSOES
+    for c in COMISSOES:
+        if c["id"] == comissao_id:
+            c["status"] = "pago"
+            c["data_pagamento"] = datetime.now(tz).strftime("%d/%m/%Y %H:%M")
+            salvar_comissoes(COMISSOES)
+            return jsonify({"status": "ok", "comissao": c}), 200
+    return jsonify({"status": "erro", "msg": "Comissão não encontrada"}), 404
+
+@app.route("/comissoes/recarregar", methods=["POST"])
+def recarregar_comissoes():
+    global COMISSOES
+    COMISSOES = carregar_comissoes()
+    return jsonify({"status": "ok", "total": len(COMISSOES)}), 200
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
