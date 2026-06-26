@@ -309,11 +309,13 @@ def transcrever_audio_cliente(message, numero, msg_id=None, lid_jid=None):
                     "convertToMp4": False
                 }
                 r = requests.post(url_media, headers=headers, json=payload, timeout=15)
-                if r.status_code == 200:
+                if r.status_code in (200, 201):
                     b64data = r.json().get("base64", "")
                     if b64data:
                         audio_bytes = base64.b64decode(b64data)
                         print(f"[SIMONE] Áudio baixado: {len(audio_bytes)} bytes")
+                    else:
+                        print(f"[SIMONE] Resposta sem base64: {r.text[:100]}")
                 else:
                     print(f"[SIMONE] Erro mídia Evolution: {r.status_code} {r.text[:100]}")
             except Exception as e:
@@ -987,23 +989,23 @@ def webhook():
             conversas[numero_cliente]["historico"] = historico[-28:]
 
         # ── TODA a conversa de venda vai em áudio ────────────────────────
-        # Primeiro contato: áudio de abertura fixo (script impactante)
-        # Demais mensagens: resposta gerada pela IA, também em áudio
-        # Fallback para texto só se ElevenLabs falhar
         if ELEVENLABS_API_KEY:
+            # Primeiro contato: áudio de abertura fixo + marca como enviado
             if not estado.get("audio_inicial_enviado"):
                 texto_audio = AUDIO_ABERTURA_SCRIPT
+                tipo_audio = "audio_abertura"
             else:
+                # Demais mensagens: resposta gerada pela IA
                 texto_audio = resposta_texto
+                tipo_audio = "audio_resposta"
 
             audio = gerar_audio_simone(texto_audio)
             if audio:
                 sucesso = enviar_audio(numero_cliente, audio)
                 if sucesso:
                     estado["audio_inicial_enviado"] = True
-                    tipo = "audio_abertura" if not estado.get("audio_inicial_enviado") else "audio_venda"
-                    print(f"[SIMONE] Áudio ({tipo}) enviado para {numero_cliente}")
-                    return jsonify({"status": "ok", "tipo": tipo}), 200
+                    print(f"[SIMONE] Áudio ({tipo_audio}) enviado para {numero_cliente}")
+                    return jsonify({"status": "ok", "tipo": tipo_audio}), 200
             print("[SIMONE] ElevenLabs falhou — fallback texto")
 
         # Fallback: texto
@@ -1031,6 +1033,19 @@ def health():
         "conversas_ativas": len(conversas),
         "endpoints": ["/webhook", "/dashboard/dados", "/dashboard/lead", "/dashboard/socio", "/cotacoes"]
     }), 200
+
+@app.route("/reset/<numero>", methods=["GET"])
+def reset_conversa(numero):
+    """Reseta conversa de um número específico ou 'todos'."""
+    if numero == "todos":
+        conversas.clear()
+        return jsonify({"status": "ok", "mensagem": "Todas as conversas resetadas"}), 200
+    # Normalizar número
+    num = re.sub(r'\D', '', numero)
+    if num in conversas:
+        del conversas[num]
+        return jsonify({"status": "ok", "mensagem": f"Conversa de {num} resetada"}), 200
+    return jsonify({"status": "nao_encontrado", "numero": num, "ativas": list(conversas.keys())}), 200
 
 @app.route("/dashboard/dados", methods=["GET"])
 def dashboard_dados():
