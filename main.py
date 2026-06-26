@@ -62,7 +62,7 @@ VIDEO_PROPAGANDA_ID = "1hNYwJ4dLUdvBmrM0V5KUWJenrH9ylCKm"
 DASHBOARD_DATA = {"leads": [], "transacoes": [], "socios_arvore": []}
 
 # ── Banco de contratos persistido no GitHub (nunca perde no redeploy) ────
-GITHUB_TOKEN   = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_TOKEN   = os.environ.get("GH_TOKEN", "")  # Railway bloqueia GITHUB_*, usar GH_TOKEN
 GITHUB_REPO    = os.environ.get("GITHUB_REPO", "marciolukas1-a11y/eva-enviocred")
 GITHUB_DB_PATH = "db/contratos.json"
 
