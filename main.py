@@ -53,7 +53,8 @@ CONTATOS_VIP = {
     "5511000000000": "Crefisa",
 }
 
-MARCIO_NUMBERS = ['5583999628152', '558399628152', '5583991144899', '558391144899']
+MARCIO_NUMBERS    = ['5583999628152', '558399628152', '5583991144899', '558391144899']
+MARCIO_PESSOAL    = '5583991144899'  # WhatsApp pessoal do Márcio — notificações vão aqui
 
 SUPERSIM_LINK = "susim.co/7+peoHFiNQsn8C1qFl0tCA=="
 
@@ -227,7 +228,7 @@ def registrar_no_dashboard(tipo, dados):
     print(f"[DASHBOARD] {tipo}: {dados.get('nome','?')}")
 
 def notificar_marcio(texto):
-    enviar_texto(MARCIO_NUMBERS[0], f"🤖 SIMONE:\n{texto}")
+    enviar_texto(MARCIO_PESSOAL, f"🤖 SIMONE:\n{texto}")
 
 def enviar_texto(numero, texto):
     url = f"{EVOLUTION_API_URL}/message/sendText/{EVOLUTION_INSTANCE}"
@@ -754,20 +755,25 @@ def webhook():
                     video_url = VIDEO_PROPAGANDA_URL
                     enviou_video = enviar_video_url(alvo_num, video_url)
                     time.sleep(3)
-                    # Mensagem de abordagem
+                    # Mensagem de abordagem — vendedora, com gatilho emocional
                     msg_abordagem = (
-                        f"{saudacao_a}! 😊 Aqui é a Simone, da *Envio CRED*.\n\n"
-                        f"Vi que você pode precisar de crédito e vim te apresentar nossas soluções. "
-                        f"Trabalhamos com empréstimo pessoal, financiamento e muito mais — "
-                        f"inclusive pra quem tem restrição no nome! 💙\n\n"
-                        f"Posso te ajudar com alguma coisa?"
+                        f"{saudacao_a}! Tudo bem? 😊\n\n"
+                        f"Aqui é a *Simone*, consultora da *Envio CRED*.\n\n"
+                        f"Eu vim te trazer uma oportunidade que pode mudar o seu mês — "
+                        f"ou quem sabe o seu ano. 💡\n\n"
+                        f"A gente trabalha com crédito de verdade: empréstimo pessoal, "
+                        f"financiamento, e até solução pra quem tem restrição no nome.\n\n"
+                        f"Posso te apresentar as condições?"
                     )
-                    # Tentar áudio primeiro
+                    # Áudio primeiro — sempre tentar ElevenLabs
+                    audio_enviado = False
                     if ELEVENLABS_API_KEY:
                         audio = gerar_audio_simone(msg_abordagem)
                         if audio and enviar_audio(alvo_num, audio):
+                            audio_enviado = True
                             conversas[alvo_num]["audio_inicial_enviado"] = True
-                    else:
+                    # Fallback: texto se áudio falhar
+                    if not audio_enviado:
                         enviar_texto(alvo_num, msg_abordagem)
 
                     conversas[alvo_num]["historico"].append({"role": "assistant", "content": msg_abordagem})
@@ -783,7 +789,7 @@ def webhook():
         if nome_vip:
             msg_vip = (f"Parceiro/empresa:\nDe: {nome_vip} ({push_name})\n"
                        f"Número: {numero_cliente}\nMsg: {message.get('conversation','')}")
-            enviar_texto(MARCIO_NUMBERS[0], msg_vip)
+            enviar_texto(MARCIO_PESSOAL, msg_vip)
             enviar_texto(numero_cliente,
                          "Olá! Sua mensagem foi encaminhada ao responsável da Envio CRED. Em breve você recebe um retorno!")
             return jsonify({"status": "vip_encaminhado"}), 200
@@ -990,7 +996,7 @@ def health():
     now = datetime.now(tz).strftime("%d/%m/%Y %H:%M")
     return jsonify({
         "status": "Simone online 24h/7d 🤖",
-        "versao": "5.3",
+        "versao": "5.2",
         "agora": now,
         "groq": bool(GROQ_API_KEY),
         "elevenlabs": bool(ELEVENLABS_API_KEY),
@@ -1232,38 +1238,6 @@ def recarregar_comissoes():
     COMISSOES = carregar_comissoes()
     return jsonify({"status": "ok", "total": len(COMISSOES)}), 200
 
-
-
-@app.route("/teste/video", methods=["POST"])
-def teste_video():
-    """Testa envio de vídeo para um número."""
-    dados = request.json or {}
-    numero = dados.get("numero", "5583999628152")
-    url_video = VIDEO_PROPAGANDA_URL
-    resultado = enviar_video_url(numero, url_video, "Teste Envio CRED")
-    # Tentar também base64
-    if not resultado:
-        try:
-            import urllib.request
-            with urllib.request.urlopen(url_video) as r:
-                video_bytes = r.read()
-            import base64 as b64
-            video_b64 = b64.b64encode(video_bytes).decode()
-            url_ev = f"{EVOLUTION_API_URL}/message/sendMedia/{EVOLUTION_INSTANCE}"
-            headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
-            payload = {
-                "number": numero,
-                "mediatype": "video",
-                "media": video_b64,
-                "caption": "",
-                "fileName": "enviocred.mp4"
-            }
-            r2 = requests.post(url_ev, headers=headers, json=payload, timeout=60)
-            resultado_b64 = r2.status_code in [200, 201]
-            return jsonify({"url_resultado": resultado, "b64_resultado": resultado_b64, "b64_status": r2.status_code, "b64_resp": r2.text[:200]}), 200
-        except Exception as e:
-            return jsonify({"url_resultado": resultado, "b64_erro": str(e)}), 200
-    return jsonify({"url_resultado": resultado}), 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
