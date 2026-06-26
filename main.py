@@ -1096,17 +1096,6 @@ def disparar_cobrancas():
     }), 200
 
 
-@app.route("/debug/env", methods=["GET"])
-def debug_env():
-    """Diagnóstico temporário — verificar variáveis disponíveis."""
-    import os
-    vars_disp = {k: "***" for k in os.environ.keys() if not k.startswith("PATH")}
-    gh_token_presente = bool(os.environ.get("GH_TOKEN", ""))
-    return jsonify({
-        "gh_token_presente": gh_token_presente,
-        "gh_token_tamanho": len(os.environ.get("GH_TOKEN", "")),
-        "variaveis": list(vars_disp.keys())
-    }), 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
