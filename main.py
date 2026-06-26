@@ -57,7 +57,7 @@ MARCIO_NUMBERS = ['5583999628152', '558399628152', '5583991144899', '55839114489
 
 SUPERSIM_LINK = "susim.co/7+peoHFiNQsn8C1qFl0tCA=="
 
-VIDEO_PROPAGANDA_ID = "1hNYwJ4dLUdvBmrM0V5KUWJenrH9ylCKm"
+VIDEO_PROPAGANDA_URL = "https://raw.githubusercontent.com/marciolukas1-a11y/eva-enviocred/main/media/propaganda.mp4"
 
 DASHBOARD_DATA = {"leads": [], "transacoes": [], "socios_arvore": []}
 
@@ -751,7 +751,7 @@ def webhook():
                         "origem": "WhatsApp (Simone — ação ativa)"
                     })
                     # Enviar vídeo primeiro
-                    video_url = f"https://drive.google.com/uc?export=download&id={VIDEO_PROPAGANDA_ID}"
+                    video_url = VIDEO_PROPAGANDA_URL
                     enviou_video = enviar_video_url(alvo_num, video_url)
                     time.sleep(3)
                     # Mensagem de abordagem
@@ -948,7 +948,7 @@ def webhook():
 
         # ── Enviar vídeo no primeiro contato sobre crédito ────────────────
         if not estado.get("video_enviado"):
-            video_url = f"https://drive.google.com/uc?export=download&id={VIDEO_PROPAGANDA_ID}"
+            video_url = VIDEO_PROPAGANDA_URL
             enviou = enviar_video_url(numero_cliente, video_url)
             estado["video_enviado"] = True
             print(f"[SIMONE] Vídeo enviado para {numero_cliente}: {enviou}")
