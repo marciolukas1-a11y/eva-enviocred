@@ -60,6 +60,18 @@ SUPERSIM_LINK = "susim.co/7+peoHFiNQsn8C1qFl0tCA=="
 
 VIDEO_PROPAGANDA_URL = "https://raw.githubusercontent.com/marciolukas1-a11y/eva-enviocred/main/media/propaganda.mp4"
 
+# ── Script de abertura — voz impactante, gera desejo ────────────────────
+AUDIO_ABERTURA_SCRIPT = (
+    "Oi! Tudo bem? 😊 Aqui é a Simone, da Envio CRED... "
+    "e eu tenho uma novidade que pode mudar o seu mês — ou até o seu ano! "
+    "Imagina só: quitar aquela dívida cara, colocar o nome limpo, "
+    "ou realizar aquele sonho que ficou pra depois... Com a gente, isso é possível sim! "
+    "A Envio CRED trabalha com as melhores opções de crédito do mercado: "
+    "empréstimo pessoal, consignado, refinanciamento; "
+    "tudo com taxa baixa, aprovação rápida e sem burocracia. "
+    "Me fala: o que você precisa resolver hoje?"
+)
+
 DASHBOARD_DATA = {"leads": [], "transacoes": [], "socios_arvore": []}
 
 # ── Banco de contratos persistido no GitHub (nunca perde no redeploy) ────
@@ -751,30 +763,28 @@ def webhook():
                         "produto": "Em triagem", "status": "abordagem_ativa",
                         "origem": "WhatsApp (Simone — ação ativa)"
                     })
-                    # Enviar vídeo primeiro
+                    # 1) Vídeo de propaganda primeiro
                     video_url = VIDEO_PROPAGANDA_URL
                     enviou_video = enviar_video_url(alvo_num, video_url)
                     time.sleep(3)
-                    # Mensagem de abordagem — vendedora, com gatilho emocional
-                    msg_abordagem = (
-                        f"{saudacao_a}! Tudo bem? 😊\n\n"
-                        f"Aqui é a *Simone*, consultora da *Envio CRED*.\n\n"
-                        f"Eu vim te trazer uma oportunidade que pode mudar o seu mês — "
-                        f"ou quem sabe o seu ano. 💡\n\n"
-                        f"A gente trabalha com crédito de verdade: empréstimo pessoal, "
-                        f"financiamento, e até solução pra quem tem restrição no nome.\n\n"
-                        f"Posso te apresentar as condições?"
-                    )
-                    # Áudio primeiro — sempre tentar ElevenLabs
+                    # 2) Áudio de abertura impactante — script fixo com gatilho emocional
                     audio_enviado = False
                     if ELEVENLABS_API_KEY:
-                        audio = gerar_audio_simone(msg_abordagem)
+                        audio = gerar_audio_simone(AUDIO_ABERTURA_SCRIPT)
                         if audio and enviar_audio(alvo_num, audio):
                             audio_enviado = True
                             conversas[alvo_num]["audio_inicial_enviado"] = True
                     # Fallback: texto se áudio falhar
                     if not audio_enviado:
-                        enviar_texto(alvo_num, msg_abordagem)
+                        msg_fallback = (
+                            f"{saudacao_a}! Tudo bem? 😊\n\n"
+                            f"Aqui é a *Simone*, da *Envio CRED*.\n\n"
+                            f"Tenho uma oportunidade que pode mudar o seu mês! 💡\n"
+                            f"Crédito com taxa baixa, aprovação rápida e sem burocracia.\n\n"
+                            f"Me fala: o que você precisa resolver hoje?"
+                        )
+                        enviar_texto(alvo_num, msg_fallback)
+                    msg_abordagem = AUDIO_ABERTURA_SCRIPT
 
                     conversas[alvo_num]["historico"].append({"role": "assistant", "content": msg_abordagem})
                     notificar_marcio(f"✅ Abordagem ativa disparada!\nNúmero: {alvo_num}\nVídeo: {'enviado' if enviou_video else 'falhou'}")
@@ -968,15 +978,16 @@ def webhook():
         if len(historico) > 28:
             conversas[numero_cliente]["historico"] = historico[-28:]
 
-        # Áudio no primeiro contato sobre crédito; texto nos demais
+        # Primeiro contato: sempre usar o áudio de abertura impactante (script fixo)
+        # Demais contatos: gerar áudio apenas se ElevenLabs disponível
         if not estado.get("audio_inicial_enviado") and ELEVENLABS_API_KEY:
-            audio = gerar_audio_simone(resposta_texto)
+            audio = gerar_audio_simone(AUDIO_ABERTURA_SCRIPT)
             if audio:
                 sucesso = enviar_audio(numero_cliente, audio)
                 if sucesso:
                     estado["audio_inicial_enviado"] = True
-                    print(f"[SIMONE] Áudio enviado para {numero_cliente}")
-                    return jsonify({"status": "ok", "tipo": "audio"}), 200
+                    print(f"[SIMONE] Áudio abertura enviado para {numero_cliente}")
+                    return jsonify({"status": "ok", "tipo": "audio_abertura"}), 200
             print("[SIMONE] Fallback para texto")
 
         enviar_texto(numero_cliente, resposta_texto)
@@ -1242,3 +1253,4 @@ def recarregar_comissoes():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
     app.run(host="0.0.0.0", port=port)
+
