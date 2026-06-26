@@ -57,6 +57,69 @@ VIDEO_PROPAGANDA_ID = "1hNYwJ4dLUdvBmrM0V5KUWJenrH9ylCKm"
 
 DASHBOARD_DATA = {"leads": [], "transacoes": [], "socios_arvore": []}
 
+# ── Banco de contratos ativos (persistido em JSON) ────────────────────────
+CONTRATOS_FILE = os.path.join(os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "/data"), "contratos.json")
+
+def carregar_contratos():
+    try:
+        os.makedirs(os.path.dirname(CONTRATOS_FILE), exist_ok=True)
+        if os.path.exists(CONTRATOS_FILE):
+            with open(CONTRATOS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"[CONTRATOS] Erro ao carregar: {e}")
+    return {}
+
+def salvar_contratos(dados):
+    try:
+        os.makedirs(os.path.dirname(CONTRATOS_FILE), exist_ok=True)
+        with open(CONTRATOS_FILE, "w", encoding="utf-8") as f:
+            json.dump(dados, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[CONTRATOS] Erro ao salvar: {e}")
+
+def registrar_contrato(numero, nome, valor, total, vencimento, contrato_id, pix="83991144899"):
+    CONTRATOS[numero] = {
+        "nome": nome,
+        "valor": valor,
+        "total": total,
+        "vencimento": vencimento,
+        "status": "ativo",
+        "contrato_id": contrato_id,
+        "pix": pix,
+        "data_registro": datetime.now(tz).strftime("%d/%m/%Y %H:%M"),
+        "cobranças_enviadas": 0
+    }
+    salvar_contratos(CONTRATOS)
+    print(f"[CONTRATOS] Registrado: {contrato_id} — {nome} ({numero})")
+
+def marcar_pago(numero):
+    if numero in CONTRATOS:
+        CONTRATOS[numero]["status"] = "pago"
+        CONTRATOS[numero]["data_pagamento"] = datetime.now(tz).strftime("%d/%m/%Y %H:%M")
+        salvar_contratos(CONTRATOS)
+
+def verificar_vencimentos():
+    """Retorna lista de contratos vencidos ou a vencer hoje — para cobrança automática."""
+    hoje = datetime.now(tz).date()
+    alertas = []
+    for numero, c in CONTRATOS.items():
+        if c.get("status") not in ["ativo", "atrasado"]:
+            continue
+        try:
+            venc = datetime.strptime(c["vencimento"], "%d/%m/%Y").date()
+            dias_restantes = (venc - hoje).days
+            if dias_restantes <= 2:  # vence hoje, amanhã ou já atrasado
+                c["status"] = "atrasado" if dias_restantes < 0 else "ativo"
+                alertas.append({"numero": numero, "contrato": c, "dias_restantes": dias_restantes})
+        except Exception as e:
+            print(f"[CONTRATOS] Erro vencimento {numero}: {e}")
+    salvar_contratos(CONTRATOS)
+    return alertas
+
+# Carrega contratos na inicialização
+CONTRATOS = carregar_contratos()
+
 # Conversas isoladas por número — suporta múltiplos clientes simultâneos
 conversas = {}
 
@@ -390,12 +453,22 @@ GELADEIRA — ignorar silenciosamente (não responder nada): Vera, Sandra, Breno
 
 📎 [cliente enviou documento/imagem] → "Recebi! ✅" e continue o fluxo
 🎙️ [cliente enviou áudio] → "Oi! Não consigo ouvir áudios, pode me mandar por texto? 😊"
+
+💳 COBRANÇA — quando o sistema injetar dados de contrato ativo abaixo, siga as regras:
+- Tom SEMPRE amigável e respeitoso — nunca ameaçador, nunca constrangedor
+- Nunca diga "você deve", "inadimplente" ou "negativar" — use "valor em aberto", "combinado", "acertar"
+- Ofereça facilidade: "posso parcelar?", "tem algum imprevisto?", "podemos resolver juntos"
+- Se cliente confirmar pagamento → "Maravilha! Me manda o comprovante aqui que já registro. 😊"
+- Se cliente pedir prazo → "Deixa eu verificar aqui o que consigo fazer por você... Aguarda 2 minutinhos! ⏳"
+  → Em seguida diga: "Consegui uma extensão de 3 dias pra você! Mas precisa ser até [nova data]. Pode ser? 🤝"
+- Se cliente negar a dívida → "Entendo! Vou verificar aqui nos nossos registros e já te retorno. ✅"
+  → Notifique Márcio internamente.
 {calc_inject}"""
 
 # ── Geração de resposta via Groq ──────────────────────────────────────────
 
-def gerar_resposta(mensagem_cliente, numero_cliente, historico, saudacao):
-    calc_inject = ""
+def gerar_resposta(mensagem_cliente, numero_cliente, historico, saudacao, calc_inject_externo=""):
+    calc_inject = calc_inject_externo  # pode vir de fora (modo cobrança) ou ser montado aqui
     historico_completo = historico + [{"role": "user", "content": mensagem_cliente}]
 
     # ── Qualificação do lead ──────────────────────────────────────────────
@@ -661,6 +734,57 @@ def webhook():
         estado = conversas[numero_cliente]
         historico = estado["historico"]
 
+        # ── Verificar se tem contrato ativo — modo cobrança ───────────────
+        contrato_ativo = CONTRATOS.get(numero_cliente)
+        if contrato_ativo and contrato_ativo.get("status") in ["ativo", "atrasado"]:
+            nome_c   = contrato_ativo["nome"].split()[0]
+            total_c  = contrato_ativo["total"]
+            venc_c   = contrato_ativo["vencimento"]
+            id_c     = contrato_ativo["contrato_id"]
+            pix_c    = contrato_ativo.get("pix", "83991144899")
+            atrasado = contrato_ativo["status"] == "atrasado"
+            status_str = "⚠️ EM ATRASO" if atrasado else "✅ NO PRAZO"
+
+            # Detectar se cliente enviou comprovante
+            if eh_documento or eh_imagem or "comprovante" in txt_lower or "paguei" in txt_lower or "fiz o pix" in txt_lower:
+                marcar_pago(numero_cliente)
+                notificar_marcio(
+                    f"💰 PAGAMENTO RECEBIDO!\n"
+                    f"Contrato: {id_c}\n"
+                    f"Cliente: {contrato_ativo['nome']} ({numero_cliente})\n"
+                    f"Valor: R${total_c}\n"
+                    f"⚠️ Confirmar comprovante no WhatsApp!"
+                )
+                resposta_pgto = f"Recebi! ✅ Obrigada, {nome_c}! Vou registrar aqui e confirmo em instantes. 😊"
+                enviar_texto(numero_cliente, resposta_pgto)
+                historico.append({"role": "user", "content": texto_recebido})
+                historico.append({"role": "assistant", "content": resposta_pgto})
+                return jsonify({"status": "ok", "tipo": "pagamento_registrado"}), 200
+
+            # Injetar contexto de cobrança no prompt
+            calc_inject_cobranca = (
+                f"\n\n💳 SISTEMA — CONTRATO ATIVO DETECTADO\n"
+                f"Cliente: {nome_c} | Contrato: {id_c} | Status: {status_str}\n"
+                f"Valor a receber: R${total_c} | Vencimento: {venc_c}\n"
+                f"PIX para pagamento: {pix_c} (telefone — Banco Inter)\n\n"
+                f"{'ATENÇÃO: CONTRATO ATRASADO — aborde com empatia, mas seja firme e objetiva.' if atrasado else 'Contrato no prazo — lembre gentilmente do vencimento próximo.'}\n"
+                f"Se o cliente perguntar sobre qualquer outro assunto, responda APENAS sobre o contrato atual.\n"
+                f"Solicite o pagamento via PIX: {pix_c} — Banco Inter.\n"
+                f"Se confirmar pagamento, peça o comprovante."
+            )
+
+            resposta_cobranca = gerar_resposta(texto_recebido, numero_cliente, historico, saudacao, calc_inject_cobranca)
+            contrato_ativo["cobranças_enviadas"] = contrato_ativo.get("cobranças_enviadas", 0) + 1
+            salvar_contratos(CONTRATOS)
+
+            historico.append({"role": "user", "content": texto_recebido})
+            historico.append({"role": "assistant", "content": resposta_cobranca})
+            if len(historico) > 20:
+                conversas[numero_cliente]["historico"] = historico[-20:]
+
+            enviar_texto(numero_cliente, resposta_cobranca)
+            return jsonify({"status": "ok", "tipo": "cobranca"}), 200
+
         # ── Triagem de assunto no PRIMEIRO contato ────────────────────────
         # Se for a primeira mensagem e NÃO for sobre crédito, Simone saúda e fica
         # em modo de espera — não entra no fluxo de qualificação ainda.
@@ -826,6 +950,111 @@ def cotacoes():
         "cotacoes": resultado,
         "total": len(tickers),
         "gerado_em": datetime.now(tz).strftime("%d/%m/%Y %H:%M:%S")
+    }), 200
+
+@app.route("/contratos", methods=["GET"])
+def listar_contratos():
+    """Lista todos os contratos com status."""
+    return jsonify({
+        "contratos": CONTRATOS,
+        "total": len(CONTRATOS),
+        "ativos": sum(1 for c in CONTRATOS.values() if c.get("status") == "ativo"),
+        "atrasados": sum(1 for c in CONTRATOS.values() if c.get("status") == "atrasado"),
+        "pagos": sum(1 for c in CONTRATOS.values() if c.get("status") == "pago"),
+    }), 200
+
+@app.route("/contratos/novo", methods=["POST"])
+def novo_contrato():
+    """
+    Cadastra um novo contrato ativo.
+    Body JSON: { numero, nome, valor, total, vencimento, contrato_id, pix? }
+    """
+    d = request.json or {}
+    campos = ["numero", "nome", "valor", "total", "vencimento", "contrato_id"]
+    for c in campos:
+        if not d.get(c):
+            return jsonify({"erro": f"Campo obrigatório: {c}"}), 400
+    registrar_contrato(
+        numero=d["numero"], nome=d["nome"],
+        valor=d["valor"], total=d["total"],
+        vencimento=d["vencimento"], contrato_id=d["contrato_id"],
+        pix=d.get("pix", "83991144899")
+    )
+    return jsonify({"status": "ok", "contrato": CONTRATOS[d["numero"]]}), 200
+
+@app.route("/contratos/pago", methods=["POST"])
+def marcar_contrato_pago():
+    """Marca contrato como pago. Body: { numero }"""
+    numero = (request.json or {}).get("numero")
+    if not numero or numero not in CONTRATOS:
+        return jsonify({"erro": "Contrato não encontrado"}), 404
+    marcar_pago(numero)
+    return jsonify({"status": "pago", "contrato": CONTRATOS[numero]}), 200
+
+@app.route("/contratos/cobrar", methods=["POST"])
+def disparar_cobrancas():
+    """
+    Dispara cobrança automática para TODOS os contratos vencidos ou a vencer em 2 dias.
+    Simone envia mensagem personalizada para cada devedor.
+    """
+    alertas = verificar_vencimentos()
+    disparados = 0
+    for a in alertas:
+        numero  = a["numero"]
+        c       = a["contrato"]
+        dias    = a["dias_restantes"]
+        nome    = c["nome"].split()[0]
+        total   = c["total"]
+        venc    = c["vencimento"]
+        id_c    = c["contrato_id"]
+        pix_c   = c.get("pix", "83991144899")
+
+        if dias < 0:
+            msg = (
+                f"{saudacao_horario()}, {nome}! 😊\n\n"
+                f"Passando para lembrar do nosso combinado — o valor de *R${total:.2f}* "
+                f"do contrato *{id_c}* venceu em *{venc}*.\n\n"
+                f"Para regularizar, é só fazer o PIX:\n"
+                f"🏦 Banco Inter\n"
+                f"🔑 Chave: *{pix_c}* (telefone)\n\n"
+                f"Me manda o comprovante aqui e já resolvo pra você! 💙"
+            )
+        elif dias == 0:
+            msg = (
+                f"{saudacao_horario()}, {nome}! 😊\n\n"
+                f"Hoje é o dia do vencimento do seu contrato *{id_c}*. "
+                f"O valor é *R${total:.2f}*.\n\n"
+                f"PIX para pagamento:\n"
+                f"🏦 Banco Inter — Chave: *{pix_c}*\n\n"
+                f"Qualquer dúvida, estou aqui! 💙"
+            )
+        else:
+            msg = (
+                f"{saudacao_horario()}, {nome}! 😊\n\n"
+                f"Passando para lembrar que seu contrato *{id_c}* vence em *{dias} dia{'s' if dias > 1 else ''}* — "
+                f"no dia *{venc}*.\n\n"
+                f"Valor: *R${total:.2f}*\n"
+                f"PIX: *{pix_c}* (Banco Inter)\n\n"
+                f"Precisando de algo, é só chamar! 💙"
+            )
+
+        sucesso = enviar_texto(numero, msg)
+        if sucesso:
+            c["cobranças_enviadas"] = c.get("cobranças_enviadas", 0) + 1
+            disparados += 1
+            print(f"[COBRANÇA] Enviada para {nome} ({numero}) — {id_c}")
+
+    salvar_contratos(CONTRATOS)
+    notificar_marcio(
+        f"📋 COBRANÇA AUTOMÁTICA CONCLUÍDA\n"
+        f"Disparadas: {disparados}/{len(alertas)} mensagens\n"
+        f"Contratos alertados: {[a['contrato']['contrato_id'] for a in alertas]}"
+    )
+    return jsonify({
+        "status": "ok",
+        "disparados": disparados,
+        "total_alertas": len(alertas),
+        "contratos": [a["contrato"]["contrato_id"] for a in alertas]
     }), 200
 
 if __name__ == "__main__":
