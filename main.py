@@ -786,11 +786,21 @@ def webhook():
             return jsonify({"status": "ignored"}), 200
 
         remote_jid = key.get("remoteJid", "")
-        numero_cliente = remote_jid.replace("@s.whatsapp.net", "").replace("@g.us", "")
 
         # Ignorar grupos
         if "@g.us" in remote_jid:
             return jsonify({"status": "ignored"}), 200
+
+        # Resolver LID para número real via remoteJidAlt
+        if "@lid" in remote_jid:
+            alt_jid = key.get("remoteJidAlt", "")
+            if alt_jid:
+                numero_cliente = alt_jid.replace("@s.whatsapp.net","").replace("@g.us","")
+            else:
+                # Fallback: usar pushName não ajuda — ignorar sem número real
+                return jsonify({"status": "ignored_lid_sem_numero"}), 200
+        else:
+            numero_cliente = remote_jid.replace("@s.whatsapp.net", "").replace("@g.us", "")
 
         message = msg_data.get("message", {})
 
