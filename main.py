@@ -688,6 +688,55 @@ def webhook():
         # ── Márcio ───────────────────────────────────────────────────────
         numero_limpo = numero_cliente.replace("+", "").replace("-", "").replace(" ", "")
         if any(numero_limpo.endswith(n[-9:]) or numero_limpo == n for n in MARCIO_NUMBERS):
+            # ── Chave #abordar — ação ativa ──────────────────────────────
+            msg_marcio = (
+                message.get("conversation") or
+                message.get("extendedTextMessage", {}).get("text") or ""
+            ).strip()
+            if msg_marcio.lower().startswith("#abordar"):
+                partes = msg_marcio.split()
+                if len(partes) >= 2:
+                    alvo_raw = partes[1].replace("+","").replace("-","").replace(" ","").replace("(","").replace(")","")
+                    alvo_num = alvo_raw if alvo_raw.startswith("55") else f"55{alvo_raw}"
+                    alvo_jid = f"{alvo_num}@s.whatsapp.net"
+                    saudacao_a = saudacao_horario()
+                    # Inicializar conversa do alvo
+                    conversas[alvo_num] = {
+                        "historico": [], "silencio": False,
+                        "video_enviado": False, "primeiro_msg_sobre_credito": False,
+                        "acao_ativa": True
+                    }
+                    registrar_no_dashboard("lead", {
+                        "nome": "Lead ativo", "telefone": alvo_num,
+                        "produto": "Em triagem", "status": "abordagem_ativa",
+                        "origem": "WhatsApp (Simone — ação ativa)"
+                    })
+                    # Enviar vídeo primeiro
+                    video_url = f"https://drive.google.com/uc?export=download&id={VIDEO_PROPAGANDA_ID}"
+                    enviou_video = enviar_video_url(alvo_num, video_url)
+                    time.sleep(3)
+                    # Mensagem de abordagem
+                    msg_abordagem = (
+                        f"{saudacao_a}! 😊 Aqui é a Simone, da *Envio CRED*.\n\n"
+                        f"Vi que você pode precisar de crédito e vim te apresentar nossas soluções. "
+                        f"Trabalhamos com empréstimo pessoal, financiamento e muito mais — "
+                        f"inclusive pra quem tem restrição no nome! 💙\n\n"
+                        f"Posso te ajudar com alguma coisa?"
+                    )
+                    # Tentar áudio primeiro
+                    if ELEVENLABS_API_KEY:
+                        audio = gerar_audio_simone(msg_abordagem)
+                        if audio and enviar_audio(alvo_num, audio):
+                            conversas[alvo_num]["audio_inicial_enviado"] = True
+                    else:
+                        enviar_texto(alvo_num, msg_abordagem)
+
+                    conversas[alvo_num]["historico"].append({"role": "assistant", "content": msg_abordagem})
+                    notificar_marcio(f"✅ Abordagem ativa disparada!\nNúmero: {alvo_num}\nVídeo: {'enviado' if enviou_video else 'falhou'}")
+                    return jsonify({"status": "abordagem_ativa", "numero": alvo_num}), 200
+                else:
+                    notificar_marcio("⚠️ Use: #abordar 5583XXXXXXXXX")
+                    return jsonify({"status": "erro_abordar"}), 200
             return jsonify({"status": "marcio_silencio"}), 200
 
         # ── VIP ──────────────────────────────────────────────────────────
@@ -1094,16 +1143,6 @@ def disparar_cobrancas():
         "total_alertas": len(alertas),
         "contratos": [a["contrato"]["contrato_id"] for a in alertas]
     }), 200
-
-
-
-
-@app.route("/contratos/recarregar", methods=["POST"])
-def recarregar_contratos():
-    """Força recarga dos contratos do GitHub."""
-    global CONTRATOS_DB
-    CONTRATOS_DB = carregar_contratos()
-    return jsonify({"status": "ok", "total": len(CONTRATOS_DB)}), 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
