@@ -1,1 +1,7 @@
-{}
+{
+  "TESTE": {
+    "contrato_id": "SI-LOCAL",
+    "nome": "Teste Local",
+    "status": "ativo"
+  }
+}
