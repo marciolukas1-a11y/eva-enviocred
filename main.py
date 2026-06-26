@@ -61,24 +61,47 @@ VIDEO_PROPAGANDA_ID = "1hNYwJ4dLUdvBmrM0V5KUWJenrH9ylCKm"
 
 DASHBOARD_DATA = {"leads": [], "transacoes": [], "socios_arvore": []}
 
-# ── Banco de contratos ativos (persistido em JSON) ────────────────────────
-CONTRATOS_FILE = os.path.join(os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "/data"), "contratos.json")
+# ── Banco de contratos persistido no GitHub (nunca perde no redeploy) ────
+GITHUB_TOKEN   = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPO    = os.environ.get("GITHUB_REPO", "marciolukas1-a11y/eva-enviocred")
+GITHUB_DB_PATH = "db/contratos.json"
+
+def _gh_headers():
+    return {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json"
+    }
 
 def carregar_contratos():
+    """Lê contratos direto do GitHub."""
     try:
-        os.makedirs(os.path.dirname(CONTRATOS_FILE), exist_ok=True)
-        if os.path.exists(CONTRATOS_FILE):
-            with open(CONTRATOS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_DB_PATH}"
+        r = requests.get(url, headers=_gh_headers(), timeout=10)
+        if r.status_code == 200:
+            import base64 as b64
+            conteudo = b64.b64decode(r.json()["content"]).decode("utf-8")
+            return json.loads(conteudo)
     except Exception as e:
         print(f"[CONTRATOS] Erro ao carregar: {e}")
     return {}
 
 def salvar_contratos(dados):
+    """Salva contratos no GitHub (persiste entre redeploys)."""
     try:
-        os.makedirs(os.path.dirname(CONTRATOS_FILE), exist_ok=True)
-        with open(CONTRATOS_FILE, "w", encoding="utf-8") as f:
-            json.dump(dados, f, ensure_ascii=False, indent=2)
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_DB_PATH}"
+        # Pegar SHA atual
+        r = requests.get(url, headers=_gh_headers(), timeout=10)
+        sha = r.json().get("sha") if r.status_code == 200 else None
+        import base64 as b64
+        conteudo_b64 = b64.b64encode(json.dumps(dados, ensure_ascii=False, indent=2).encode()).decode()
+        payload = {
+            "message": f"db: atualiza contratos {datetime.now(tz).strftime('%d/%m/%Y %H:%M')}",
+            "content": conteudo_b64
+        }
+        if sha:
+            payload["sha"] = sha
+        requests.put(url, headers=_gh_headers(), json=payload, timeout=10)
     except Exception as e:
         print(f"[CONTRATOS] Erro ao salvar: {e}")
 
@@ -554,6 +577,17 @@ def gerar_resposta(mensagem_cliente, numero_cliente, historico, saudacao, calc_i
                 "nome": nome_lead, "telefone": numero_cliente,
                 "produto": "Crédito Pessoal", "valor": valor_lead, "status": "aprovado"
             })
+            # ── Registrar contrato automaticamente ──────────────
+            import hashlib
+            contrato_id = "SI-" + hashlib.md5(
+                f"{numero_cliente}{datetime.now(tz).strftime('%d%m%Y%H%M')}".encode()
+            ).hexdigest()[:4].upper()
+            registrar_contrato(
+                numero=numero_cliente, nome=nome_lead,
+                valor=valor_lead, total=calc["total"],
+                vencimento=calc["vencimento"], contrato_id=contrato_id
+            )
+            print(f"[CONTRATOS] {contrato_id} criado automaticamente — {nome_lead}")
         elif calc["status"] == "AGUARDA_MARCIO":
             calc_inject = f"\n\n🧮 SISTEMA — ⚠️ AGUARDA MÁRCIO\nScript:\n---\n{calc['script']}\n---\nEnvie e aguarde aprovação."
             notificar_marcio(
