@@ -279,36 +279,48 @@ def enviar_video_url(numero, url_video, legenda=""):
         print(f"[SIMONE] Erro ao enviar vídeo: {e}")
         return False
 
-def transcrever_audio_cliente(message, numero):
+def transcrever_audio_cliente(message, numero, msg_id=None, lid_jid=None):
     """Baixa o áudio do cliente via Evolution API e transcreve com Groq Whisper."""
     try:
         import tempfile
         audio_msg = message.get("audioMessage", {})
-
-        # Tentar base64 direto no payload (alguns casos)
-        audio_b64 = audio_msg.get("base64") or audio_msg.get("data")
         audio_bytes = None
 
+        # Tentar base64 direto no payload
+        audio_b64 = audio_msg.get("base64") or audio_msg.get("data")
         if audio_b64:
             audio_bytes = base64.b64decode(audio_b64)
 
-        # Se não veio base64, buscar via endpoint de mídia da Evolution
-        if not audio_bytes or len(audio_bytes) < 1000:
+        # Buscar via getBase64FromMediaMessage usando o ID real da mensagem
+        if (not audio_bytes or len(audio_bytes) < 1000) and msg_id:
             try:
                 url_media = f"{EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/{EVOLUTION_INSTANCE}"
                 headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
-                # Precisamos da messageId — vem no contexto do webhook via key
-                # Passamos o número e pedimos o último áudio
-                payload = {"message": {"key": {"remoteJid": f"{numero}@s.whatsapp.net"}, "message": {"audioMessage": audio_msg}}, "convertToMp4": False}
+                # Usar LID se disponível, senão número@s.whatsapp.net
+                jid_para_busca = lid_jid if lid_jid else f"{numero}@s.whatsapp.net"
+                payload = {
+                    "message": {
+                        "key": {
+                            "id": msg_id,
+                            "remoteJid": jid_para_busca,
+                            "fromMe": False
+                        }
+                    },
+                    "convertToMp4": False
+                }
                 r = requests.post(url_media, headers=headers, json=payload, timeout=15)
                 if r.status_code == 200:
                     b64data = r.json().get("base64", "")
                     if b64data:
                         audio_bytes = base64.b64decode(b64data)
+                        print(f"[SIMONE] Áudio baixado: {len(audio_bytes)} bytes")
+                else:
+                    print(f"[SIMONE] Erro mídia Evolution: {r.status_code} {r.text[:100]}")
             except Exception as e:
                 print(f"[SIMONE] Erro ao buscar mídia Evolution: {e}")
 
         if not audio_bytes or len(audio_bytes) < 1000:
+            print("[SIMONE] Áudio vazio ou muito pequeno — não transcrever")
             return None
 
         # Salvar em arquivo temporário
@@ -328,7 +340,9 @@ def transcrever_audio_cliente(message, numero):
         os.unlink(tmp_path)
 
         if resp.status_code == 200:
-            return resp.json().get("text", "").strip()
+            texto = resp.json().get("text", "").strip()
+            print(f"[SIMONE] Transcrito: {texto[:80]}")
+            return texto
         print(f"[SIMONE] Groq Whisper erro: {resp.status_code} {resp.text[:100]}")
         return None
     except Exception as e:
@@ -901,12 +915,14 @@ def webhook():
 
         if eh_audio_cli:
             # ── Transcrever áudio do cliente via Groq Whisper ─────────────
-            texto_transcrito = transcrever_audio_cliente(message, numero_cliente)
+            msg_id = key.get("id")
+            lid_jid = key.get("remoteJid") if "@lid" in key.get("remoteJid","") else None
+            texto_transcrito = transcrever_audio_cliente(message, numero_cliente, msg_id=msg_id, lid_jid=lid_jid)
             if texto_transcrito:
                 texto_recebido = texto_transcrito
                 print(f"[SIMONE] Áudio transcrito: {texto_transcrito[:80]}")
             else:
-                texto_recebido = "Olá, recebi seu áudio mas não consegui ouvir direito. Pode me falar o que precisa?"
+                texto_recebido = "Recebi seu áudio, mas não consegui entender. Pode me falar o que precisa?"
 
         if not texto_recebido.strip():
             return jsonify({"status": "ignored"}), 200
