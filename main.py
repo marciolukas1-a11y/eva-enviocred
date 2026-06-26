@@ -274,23 +274,35 @@ def transcrever_audio_cliente(message, numero):
     """Baixa o áudio do cliente via Evolution API e transcreve com Groq Whisper."""
     try:
         import tempfile
-        # Pegar o messageId para baixar a mídia
         audio_msg = message.get("audioMessage", {})
-        # Tentar baixar via Evolution API mediaMessage
-        # A Evolution retorna base64 no próprio webhook em alguns casos
+
+        # Tentar base64 direto no payload (alguns casos)
         audio_b64 = audio_msg.get("base64") or audio_msg.get("data")
         audio_bytes = None
+
         if audio_b64:
             audio_bytes = base64.b64decode(audio_b64)
-        else:
-            # Buscar via endpoint de download da Evolution
-            # Precisamos do messageId — vem no evento do webhook
-            pass
+
+        # Se não veio base64, buscar via endpoint de mídia da Evolution
+        if not audio_bytes or len(audio_bytes) < 1000:
+            try:
+                url_media = f"{EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/{EVOLUTION_INSTANCE}"
+                headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
+                # Precisamos da messageId — vem no contexto do webhook via key
+                # Passamos o número e pedimos o último áudio
+                payload = {"message": {"key": {"remoteJid": f"{numero}@s.whatsapp.net"}, "message": {"audioMessage": audio_msg}}, "convertToMp4": False}
+                r = requests.post(url_media, headers=headers, json=payload, timeout=15)
+                if r.status_code == 200:
+                    b64data = r.json().get("base64", "")
+                    if b64data:
+                        audio_bytes = base64.b64decode(b64data)
+            except Exception as e:
+                print(f"[SIMONE] Erro ao buscar mídia Evolution: {e}")
 
         if not audio_bytes or len(audio_bytes) < 1000:
             return None
 
-        # Salvar em arquivo temporário .ogg
+        # Salvar em arquivo temporário
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
@@ -305,6 +317,7 @@ def transcrever_audio_cliente(message, numero):
                 timeout=20
             )
         os.unlink(tmp_path)
+
         if resp.status_code == 200:
             return resp.json().get("text", "").strip()
         print(f"[SIMONE] Groq Whisper erro: {resp.status_code} {resp.text[:100]}")
@@ -1068,8 +1081,8 @@ def webhook():
 def health():
     now = datetime.now(tz).strftime("%d/%m/%Y %H:%M")
     return jsonify({
-        "status": "Simone online 24h/7d 🤖",
-        "versao": "5.2",
+        "status": "Simone online 24h/7d",
+        "versao": "5.3",
         "agora": now,
         "groq": bool(GROQ_API_KEY),
         "elevenlabs": bool(ELEVENLABS_API_KEY),
