@@ -383,12 +383,15 @@ IDENTIDADE E MISSÃO:
 9. NUNCA mencione os nomes "SuperSim" ou "Creditas" — fale "nosso parceiro" ou "nossa solução"
 10. NUNCA responda sobre assuntos que não sejam crédito, empréstimo ou produtos da Envio CRED
 
-✍️ ESTILO DE ESCRITA — OBRIGATÓRIO:
-- Use SEMPRE pontuação completa: vírgulas, pontos, reticências — elas criam pausas naturais
-- Acentuação correta em TODAS as palavras: você, crédito, empréstimo, rápido, solução, também, está, já
-- Respostas curtas: máximo 3 frases por mensagem
-- No máximo 1 emoji por mensagem, sempre variando
-- Português informal e caloroso, nunca parecer script
+🎙️ FORMATO DE VOZ — TODAS AS RESPOSTAS VÃO SER LIDAS EM ÁUDIO:
+- NUNCA use emojis, asteriscos, hashtags, bullets, traços ou qualquer símbolo — eles viram ruído na voz
+- NUNCA use listas com números ou marcadores — fale em frases corridas
+- Escreva exatamente como você FALARIA em voz alta — natural, humano, caloroso
+- Use reticências (...) para pausas naturais entre ideias
+- Use vírgulas generosas — elas fazem a voz respirar
+- Acentuação PERFEITA em todas as palavras: você, crédito, empréstimo, rápido, solução, também, está, já, ótimo, fácil
+- Respostas curtas e naturais: máximo 3 frases por mensagem
+- Português informal e caloroso, como uma amiga falando no ouvido
 - Saudação atual: use "{saudacao}" no primeiro contato do dia com o cliente
 
 🕐 SAUDAÇÃO POR HORÁRIO — OBRIGATÓRIO NO PRIMEIRO CONTATO:
@@ -978,21 +981,30 @@ def webhook():
         if len(historico) > 28:
             conversas[numero_cliente]["historico"] = historico[-28:]
 
-        # Primeiro contato: sempre usar o áudio de abertura impactante (script fixo)
-        # Demais contatos: gerar áudio apenas se ElevenLabs disponível
-        if not estado.get("audio_inicial_enviado") and ELEVENLABS_API_KEY:
-            audio = gerar_audio_simone(AUDIO_ABERTURA_SCRIPT)
+        # ── TODA a conversa de venda vai em áudio ────────────────────────
+        # Primeiro contato: áudio de abertura fixo (script impactante)
+        # Demais mensagens: resposta gerada pela IA, também em áudio
+        # Fallback para texto só se ElevenLabs falhar
+        if ELEVENLABS_API_KEY:
+            if not estado.get("audio_inicial_enviado"):
+                texto_audio = AUDIO_ABERTURA_SCRIPT
+            else:
+                texto_audio = resposta_texto
+
+            audio = gerar_audio_simone(texto_audio)
             if audio:
                 sucesso = enviar_audio(numero_cliente, audio)
                 if sucesso:
                     estado["audio_inicial_enviado"] = True
-                    print(f"[SIMONE] Áudio abertura enviado para {numero_cliente}")
-                    return jsonify({"status": "ok", "tipo": "audio_abertura"}), 200
-            print("[SIMONE] Fallback para texto")
+                    tipo = "audio_abertura" if not estado.get("audio_inicial_enviado") else "audio_venda"
+                    print(f"[SIMONE] Áudio ({tipo}) enviado para {numero_cliente}")
+                    return jsonify({"status": "ok", "tipo": tipo}), 200
+            print("[SIMONE] ElevenLabs falhou — fallback texto")
 
+        # Fallback: texto
         enviar_texto(numero_cliente, resposta_texto)
-        print(f"[SIMONE] Texto → {numero_cliente}: {resposta_texto[:80]}...")
-        return jsonify({"status": "ok", "tipo": "texto"}), 200
+        print(f"[SIMONE] Texto (fallback) → {numero_cliente}: {resposta_texto[:80]}...")
+        return jsonify({"status": "ok", "tipo": "texto_fallback"}), 200
 
     except Exception as e:
         print(f"[SIMONE] Erro geral: {e}")
