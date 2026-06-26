@@ -270,6 +270,50 @@ def enviar_video_url(numero, url_video, legenda=""):
         print(f"[SIMONE] Erro ao enviar vídeo: {e}")
         return False
 
+def transcrever_audio_cliente(message, numero):
+    """Baixa o áudio do cliente via Evolution API e transcreve com Groq Whisper."""
+    try:
+        import tempfile
+        # Pegar o messageId para baixar a mídia
+        audio_msg = message.get("audioMessage", {})
+        # Tentar baixar via Evolution API mediaMessage
+        # A Evolution retorna base64 no próprio webhook em alguns casos
+        audio_b64 = audio_msg.get("base64") or audio_msg.get("data")
+        audio_bytes = None
+        if audio_b64:
+            audio_bytes = base64.b64decode(audio_b64)
+        else:
+            # Buscar via endpoint de download da Evolution
+            # Precisamos do messageId — vem no evento do webhook
+            pass
+
+        if not audio_bytes or len(audio_bytes) < 1000:
+            return None
+
+        # Salvar em arquivo temporário .ogg
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+
+        # Transcrever com Groq Whisper
+        with open(tmp_path, "rb") as f:
+            resp = requests.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                files={"file": ("audio.ogg", f, "audio/ogg")},
+                data={"model": "whisper-large-v3-turbo", "language": "pt"},
+                timeout=20
+            )
+        os.unlink(tmp_path)
+        if resp.status_code == 200:
+            return resp.json().get("text", "").strip()
+        print(f"[SIMONE] Groq Whisper erro: {resp.status_code} {resp.text[:100]}")
+        return None
+    except Exception as e:
+        print(f"[SIMONE] Erro transcrição áudio: {e}")
+        return None
+
+
 def gerar_audio_simone(texto):
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{SIMONE_VOICE_ID}"
     headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
@@ -824,7 +868,13 @@ def webhook():
             texto_recebido = f"[cliente enviou {tipo} como comprovante] {caption}".strip()
 
         if eh_audio_cli:
-            texto_recebido = "[cliente enviou áudio]"
+            # ── Transcrever áudio do cliente via Groq Whisper ─────────────
+            texto_transcrito = transcrever_audio_cliente(message, numero_cliente)
+            if texto_transcrito:
+                texto_recebido = texto_transcrito
+                print(f"[SIMONE] Áudio transcrito: {texto_transcrito[:80]}")
+            else:
+                texto_recebido = "Olá, recebi seu áudio mas não consegui ouvir direito. Pode me falar o que precisa?"
 
         if not texto_recebido.strip():
             return jsonify({"status": "ignored"}), 200
