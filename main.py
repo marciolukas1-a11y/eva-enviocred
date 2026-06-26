@@ -1097,6 +1097,14 @@ def disparar_cobrancas():
 
 
 
+
+@app.route("/contratos/recarregar", methods=["POST"])
+def recarregar_contratos():
+    """Força recarga dos contratos do GitHub."""
+    global CONTRATOS_DB
+    CONTRATOS_DB = carregar_contratos()
+    return jsonify({"status": "ok", "total": len(CONTRATOS_DB)}), 200
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
     app.run(host="0.0.0.0", port=port)
