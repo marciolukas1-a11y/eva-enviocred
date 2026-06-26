@@ -1233,6 +1233,38 @@ def recarregar_comissoes():
     return jsonify({"status": "ok", "total": len(COMISSOES)}), 200
 
 
+
+@app.route("/teste/video", methods=["POST"])
+def teste_video():
+    """Testa envio de vídeo para um número."""
+    dados = request.json or {}
+    numero = dados.get("numero", "5583999628152")
+    url_video = VIDEO_PROPAGANDA_URL
+    resultado = enviar_video_url(numero, url_video, "Teste Envio CRED")
+    # Tentar também base64
+    if not resultado:
+        try:
+            import urllib.request
+            with urllib.request.urlopen(url_video) as r:
+                video_bytes = r.read()
+            import base64 as b64
+            video_b64 = b64.b64encode(video_bytes).decode()
+            url_ev = f"{EVOLUTION_API_URL}/message/sendMedia/{EVOLUTION_INSTANCE}"
+            headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
+            payload = {
+                "number": numero,
+                "mediatype": "video",
+                "media": video_b64,
+                "caption": "",
+                "fileName": "enviocred.mp4"
+            }
+            r2 = requests.post(url_ev, headers=headers, json=payload, timeout=60)
+            resultado_b64 = r2.status_code in [200, 201]
+            return jsonify({"url_resultado": resultado, "b64_resultado": resultado_b64, "b64_status": r2.status_code, "b64_resp": r2.text[:200]}), 200
+        except Exception as e:
+            return jsonify({"url_resultado": resultado, "b64_erro": str(e)}), 200
+    return jsonify({"url_resultado": resultado}), 200
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
     app.run(host="0.0.0.0", port=port)
