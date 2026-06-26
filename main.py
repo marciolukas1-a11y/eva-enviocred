@@ -53,8 +53,8 @@ CONTATOS_VIP = {
     "5511000000000": "Crefisa",
 }
 
-MARCIO_NUMBERS    = ['5583999628152', '558399628152', '5583991144899', '558391144899']
-MARCIO_PESSOAL    = '5583991144899'  # WhatsApp pessoal do Márcio — notificações vão aqui
+MARCIO_NUMBERS    = ['5583999628152', '558399628152']
+MARCIO_PESSOAL    = '5583999628152'  # Notificações vão para o número da empresa
 
 SUPERSIM_LINK = "susim.co/7+peoHFiNQsn8C1qFl0tCA=="
 
