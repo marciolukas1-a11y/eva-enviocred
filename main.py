@@ -738,7 +738,7 @@ def webhook():
                         if audio and enviar_audio(alvo_num, audio):
                             audio_enviado = True
                             conversas[alvo_num]["audio_inicial_enviado"] = True
-                conversas[alvo_num]["video_enviado"] = True
+                            conversas[alvo_num]["video_enviado"] = True
                     # Fallback: texto se áudio falhar
                     if not audio_enviado:
                         msg_fallback = (
