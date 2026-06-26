@@ -240,12 +240,21 @@ def registrar_no_dashboard(tipo, dados):
     print(f"[DASHBOARD] {tipo}: {dados.get('nome','?')}")
 
 def notificar_marcio(texto):
-    enviar_texto(MARCIO_PESSOAL, f"🤖 SIMONE:\n{texto}")
+    enviar_texto(MARCIO_PESSOAL, f"SIMONE:\n{texto}")
+
+def normalizar_numero(numero):
+    """Remove o nono dígito extra de números brasileiros para compatibilidade com WhatsApp."""
+    n = numero.replace("+","").replace("-","").replace(" ","")
+    # Brasil: 55 + DDD(2) + número
+    # Se tiver 13 dígitos (55 + DDD + 9 dígitos), remove o 9 extra
+    if n.startswith("55") and len(n) == 13:
+        n = n[:4] + n[5:]  # remove o 9 extra: 5583 9 91144899 → 558391144899
+    return n
 
 def enviar_texto(numero, texto):
     url = f"{EVOLUTION_API_URL}/message/sendText/{EVOLUTION_INSTANCE}"
     headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
-    payload = {"number": numero, "text": texto}
+    payload = {"number": normalizar_numero(numero), "text": texto}
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=10)
         return r.status_code in [200, 201]
@@ -257,7 +266,7 @@ def enviar_video_url(numero, url_video, legenda=""):
     url = f"{EVOLUTION_API_URL}/message/sendMedia/{EVOLUTION_INSTANCE}"
     headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
     payload = {
-        "number": numero,
+        "number": normalizar_numero(numero),
         "mediatype": "video",
         "media": url_video,
         "caption": legenda,
@@ -353,7 +362,7 @@ def enviar_audio(numero, audio_bytes):
     audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
     url = f"{EVOLUTION_API_URL}/message/sendWhatsAppAudio/{EVOLUTION_INSTANCE}"
     headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
-    payload = {"number": numero, "audio": audio_b64, "encoding": True}
+    payload = {"number": normalizar_numero(numero), "audio": audio_b64, "encoding": True}
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=25)
         return r.status_code in [200, 201]
