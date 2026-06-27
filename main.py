@@ -352,9 +352,88 @@ def transcrever_audio_cliente(message, numero, msg_id=None, lid_jid=None):
         return None
 
 
+
+# ─── PRÉ-PROCESSAMENTO DE ÁUDIO (dicção perfeita) ────────────────────────────
+import re as _re
+
+def preparar_texto_audio(texto):
+    """Normaliza o texto para ElevenLabs: acentos, números falados, pausas naturais."""
+    import re
+
+    # 1. Garantir acentuação obrigatória (palavras sem acento que o modelo às vezes omite)
+    correcoes = {
+        r'\bvoce\b': 'você', r'\bVoce\b': 'Você',
+        r'\bcredito\b': 'crédito', r'\bCredito\b': 'Crédito',
+        r'\bemprestimo\b': 'empréstimo', r'\bEmprestimo\b': 'Empréstimo',
+        r'\brapido\b': 'rápido', r'\bRapido\b': 'Rápido',
+        r'\bsolucao\b': 'solução', r'\bSolucao\b': 'Solução',
+        r'\bcartao\b': 'cartão', r'\bCartao\b': 'Cartão',
+        r'\bjuros\b': 'juros',
+        r'\bprazo\b': 'prazo',
+        r'\bnumero\b': 'número', r'\bNumero\b': 'Número',
+        r'\bpagamento\b': 'pagamento',
+        r'\boperacao\b': 'operação',
+        r'\baprovacao\b': 'aprovação',
+        r'\binformacao\b': 'informação',
+        r'\bsituacao\b': 'situação',
+        r'\bregistro\b': 'registro',
+        r'\bcliente\b': 'cliente',
+    }
+    for pattern, replacement in correcoes.items():
+        texto = re.sub(pattern, replacement, texto)
+
+    # 2. Números difíceis de pronunciar → forma escrita por extenso
+    numeros_extenso = {
+        r'\bR\$\s*100\b': 'cem reais',
+        r'\bR\$\s*150\b': 'cento e cinquenta reais',
+        r'\bR\$\s*200\b': 'duzentos reais',
+        r'\bR\$\s*250\b': 'duzentos e cinquenta reais',
+        r'\bR\$\s*300\b': 'trezentos reais',
+        r'\bR\$\s*350\b': 'trezentos e cinquenta reais',
+        r'\bR\$\s*400\b': 'quatrocentos reais',
+        r'\bR\$\s*450\b': 'quatrocentos e cinquenta reais',
+        r'\bR\$\s*500\b': 'quinhentos reais',
+        r'\bR\$\s*1000\b': 'mil reais',
+        r'\b100\b': 'cem',
+        r'\b150\b': 'cento e cinquenta',
+        r'\b200\b': 'duzentos',
+        r'\b250\b': 'duzentos e cinquenta',
+        r'\b300\b': 'trezentos',
+        r'\b350\b': 'trezentos e cinquenta',
+        r'\b400\b': 'quatrocentos',
+        r'\b450\b': 'quatrocentos e cinquenta',
+        r'\b500\b': 'quinhentos',
+        r'\b10\b': 'dez',
+        r'\b15\b': 'quinze',
+        r'\b20\b': 'vinte',
+        r'\b25\b': 'vinte e cinco',
+        r'\b30\b': 'trinta',
+    }
+    for pattern, replacement in numeros_extenso.items():
+        texto = re.sub(pattern, replacement, texto)
+
+    # 3. % → "por cento" para dicção clara
+    texto = re.sub(r'(\d+)\s*%', lambda m: m.group(1) + ' por cento', texto)
+
+    # 4. Pontuação forçada para pausas naturais (frases longas sem vírgula)
+    # Adicionar vírgula após conectivos sem pontuação
+    texto = re.sub(r'(então|portanto|porém|contudo|além disso|no entanto)\s', r'\1, ', texto, flags=re.IGNORECASE)
+
+    # 5. Limpar caracteres problemáticos
+    texto = texto.replace('*', '').replace('#', '').replace('_', ' ').replace('~', '')
+
+    # 6. Garantir que termina com pontuação
+    texto = texto.strip()
+    if texto and texto[-1] not in '.!?':
+        texto += '.'
+
+    return texto
+
+
 def gerar_audio_simone(texto):
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{SIMONE_VOICE_ID}"
     headers = {"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"}
+    texto = preparar_texto_audio(texto)
     payload = {
         "text": texto,
         "model_id": "eleven_turbo_v2_5",
