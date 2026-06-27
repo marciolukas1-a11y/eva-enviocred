@@ -1128,8 +1128,9 @@ def buscar_cotacao_yahoo(ticker):
     if ticker in _cache_cotacoes and agora - _cache_ts.get(ticker, 0) < 300:
         return _cache_cotacoes[ticker]
     try:
-        symbol = ticker if "." in ticker else (ticker + ".SA" if not ticker[-1].isalpha() == False else ticker)
-        for sym in [symbol, ticker]:
+        # Fix Luna v5: tenta com .SA e sem sufixo
+        symbol_sa = ticker + ".SA" if "." not in ticker else ticker
+        for sym in [symbol_sa, ticker, ticker.replace(".SA","")]:
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=1d"
             r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
             if r.status_code == 200:
@@ -1323,6 +1324,34 @@ def recarregar_comissoes():
     COMISSOES = carregar_comissoes()
     return jsonify({"status": "ok", "total": len(COMISSOES)}), 200
 
+
+
+
+# ── Admin Luna: atualizar instrucoes da Simone ────────────────────────────────
+_instrucoes_luna = []
+
+@app.route("/admin/atualizar-prompt", methods=["POST"])
+def admin_atualizar_prompt():
+    chaves_validas = ["luna2026", "Luna@Marcio2026!"]
+    api_key = request.headers.get("x-api-key", "")
+    if api_key not in chaves_validas:
+        return jsonify({"erro": "Nao autorizado"}), 401
+    data = request.get_json() or {}
+    instrucao = data.get("instrucao", "").strip()
+    if not instrucao:
+        return jsonify({"erro": "Instrucao vazia"}), 400
+    _instrucoes_luna.append(instrucao)
+    if len(_instrucoes_luna) > 5:
+        _instrucoes_luna.pop(0)
+    print(f"[LUNA] Instrucao aplicada: {instrucao[:80]}")
+    return jsonify({"status": "ok", "total": len(_instrucoes_luna)}), 200
+
+@app.route("/admin/instrucoes", methods=["GET"])
+def admin_ver_instrucoes():
+    api_key = request.headers.get("x-api-key", "")
+    if api_key not in ["luna2026", "Luna@Marcio2026!"]:
+        return jsonify({"erro": "Nao autorizado"}), 401
+    return jsonify({"instrucoes": _instrucoes_luna}), 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
