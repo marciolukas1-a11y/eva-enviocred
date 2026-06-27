@@ -994,7 +994,7 @@ def webhook():
                 conversas[numero_cliente]["historico"] = historico[-20:]
 
             enviar_texto(numero_cliente, resposta_cobranca)
-                notificar_luna(numero_cliente, mensagem_usuario, resposta_cobranca)
+            notificar_luna(numero_cliente, mensagem_usuario, resposta_cobranca)
             return jsonify({"status": "ok", "tipo": "cobranca"}), 200
 
         # ── Triagem de assunto no PRIMEIRO contato ────────────────────────
@@ -1014,7 +1014,7 @@ def webhook():
                     historico.append({"role": "assistant","content": resposta_triagem})
                     return jsonify({"status": "ok", "tipo": "audio_triagem"}), 200
             enviar_texto(numero_cliente, resposta_triagem)
-                notificar_luna(numero_cliente, mensagem_usuario, resposta_triagem)
+            notificar_luna(numero_cliente, mensagem_usuario, resposta_triagem)
             historico.append({"role": "user",    "content": texto_recebido})
             historico.append({"role": "assistant","content": resposta_triagem})
             return jsonify({"status": "ok", "tipo": "triagem"}), 200
@@ -1026,7 +1026,7 @@ def webhook():
                 f"Se precisar, é só me chamar! 💙"
             )
             enviar_texto(numero_cliente, resposta_fora)
-                notificar_luna(numero_cliente, mensagem_usuario, resposta_fora)
+            notificar_luna(numero_cliente, mensagem_usuario, resposta_fora)
             historico.append({"role": "user",    "content": texto_recebido})
             historico.append({"role": "assistant","content": resposta_fora})
             return jsonify({"status": "ok", "tipo": "fora_escopo"}), 200
@@ -1072,7 +1072,7 @@ def webhook():
 
         # Fallback: texto
         enviar_texto(numero_cliente, resposta_texto)
-                notificar_luna(numero_cliente, mensagem_usuario, resposta_texto)
+        notificar_luna(numero_cliente, mensagem_usuario, resposta_texto)
         print(f"[SIMONE] Texto (fallback) → {numero_cliente}: {resposta_texto[:80]}...")
         return jsonify({"status": "ok", "tipo": "texto_fallback"}), 200
 
