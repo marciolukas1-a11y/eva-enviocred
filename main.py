@@ -18,7 +18,7 @@ Novidades v5.2:
 """
 
 from flask import Flask, request, jsonify
-from flask_cors import CORS
+# flask_cors removido — CORS manual via after_request (bugfix 27/06/2026)
 import requests
 import os
 import json
@@ -29,26 +29,36 @@ from datetime import datetime, timedelta
 import pytz
 
 app = Flask(__name__)
-# CORS configurado para evitar headers duplicados (bugfix Luna 27/06/2026)
-CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
-
+# CORS manual — garante header único sem duplicação (bugfix Luna 27/06/2026)
 @app.after_request
 def add_cors_headers(response):
     origin = request.headers.get("Origin", "")
     allowed_origins = [
         "https://marciolukas1-a11y.github.io",
     ]
-    # Remover headers CORS duplicados e definir apenas um
-    if "Access-Control-Allow-Origin" in response.headers:
-        del response.headers["Access-Control-Allow-Origin"]
-    if origin in allowed_origins or not origin:
-        response.headers["Access-Control-Allow-Origin"] = origin if origin else "*"
+    # Definir header CORS unico — remover qualquer duplicata existente
+    while "Access-Control-Allow-Origin" in response.headers:
+        response.headers.remove("Access-Control-Allow-Origin")
+    while "Access-Control-Allow-Methods" in response.headers:
+        response.headers.remove("Access-Control-Allow-Methods")
+    while "Access-Control-Allow-Headers" in response.headers:
+        response.headers.remove("Access-Control-Allow-Headers")
+    if origin in allowed_origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
     else:
         response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
     response.headers["Access-Control-Max-Age"] = "600"
     return response
+
+@app.route("/dashboard/dados", methods=["OPTIONS"])
+@app.route("/webhook", methods=["OPTIONS"])
+@app.route("/<path:path>", methods=["OPTIONS"])
+def handle_options(path=""):
+    from flask import make_response
+    resp = make_response("", 204)
+    return resp
 
 tz = pytz.timezone("America/Sao_Paulo")
 
