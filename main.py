@@ -29,7 +29,26 @@ from datetime import datetime, timedelta
 import pytz
 
 app = Flask(__name__)
+# CORS configurado para evitar headers duplicados (bugfix Luna 27/06/2026)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
+
+@app.after_request
+def add_cors_headers(response):
+    origin = request.headers.get("Origin", "")
+    allowed_origins = [
+        "https://marciolukas1-a11y.github.io",
+    ]
+    # Remover headers CORS duplicados e definir apenas um
+    if "Access-Control-Allow-Origin" in response.headers:
+        del response.headers["Access-Control-Allow-Origin"]
+    if origin in allowed_origins or not origin:
+        response.headers["Access-Control-Allow-Origin"] = origin if origin else "*"
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    response.headers["Access-Control-Max-Age"] = "600"
+    return response
 
 tz = pytz.timezone("America/Sao_Paulo")
 
