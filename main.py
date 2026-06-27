@@ -55,6 +55,7 @@ CONTATOS_VIP = {
 
 MARCIO_NUMBERS    = ['5583999628152', '558399628152']
 MARCIO_PESSOAL    = '5583999628152'  # Notificações vão para o número da empresa
+LUNA_URL          = os.environ.get('LUNA_URL', 'https://luna-general-production.up.railway.app')  # Luna supervisiona
 
 SUPERSIM_LINK = "susim.co/7+peoHFiNQsn8C1qFl0tCA=="
 
@@ -238,6 +239,21 @@ def registrar_no_dashboard(tipo, dados):
     elif tipo == "socio_arvore":
         DASHBOARD_DATA["socios_arvore"].append(dados)
     print(f"[DASHBOARD] {tipo}: {dados.get('nome','?')}")
+
+def notificar_luna(numero, mensagem_cliente, resposta_simone):
+    """Notifica a Luna sobre cada conversa para supervisão."""
+    try:
+        payload = {
+            "event": "simone.resposta",
+            "data": {
+                "numero": numero,
+                "mensagemCliente": mensagem_cliente,
+                "respostaSimone": resposta_simone
+            }
+        }
+        requests.post(f"{LUNA_URL}/webhook", json=payload, timeout=5)
+    except Exception as e:
+        print(f"[LUNA] Falhou notificar Luna: {e}")
 
 def notificar_marcio(texto):
     enviar_texto(MARCIO_PESSOAL, f"SIMONE:\n{texto}")
@@ -951,6 +967,7 @@ def webhook():
                 )
                 resposta_pgto = f"Recebi! ✅ Obrigada, {nome_c}! Vou registrar aqui e confirmo em instantes. 😊"
                 enviar_texto(numero_cliente, resposta_pgto)
+                notificar_luna(numero_cliente, mensagem_usuario, resposta_pgto)
                 historico.append({"role": "user", "content": texto_recebido})
                 historico.append({"role": "assistant", "content": resposta_pgto})
                 return jsonify({"status": "ok", "tipo": "pagamento_registrado"}), 200
@@ -977,6 +994,7 @@ def webhook():
                 conversas[numero_cliente]["historico"] = historico[-20:]
 
             enviar_texto(numero_cliente, resposta_cobranca)
+                notificar_luna(numero_cliente, mensagem_usuario, resposta_cobranca)
             return jsonify({"status": "ok", "tipo": "cobranca"}), 200
 
         # ── Triagem de assunto no PRIMEIRO contato ────────────────────────
@@ -996,6 +1014,7 @@ def webhook():
                     historico.append({"role": "assistant","content": resposta_triagem})
                     return jsonify({"status": "ok", "tipo": "audio_triagem"}), 200
             enviar_texto(numero_cliente, resposta_triagem)
+                notificar_luna(numero_cliente, mensagem_usuario, resposta_triagem)
             historico.append({"role": "user",    "content": texto_recebido})
             historico.append({"role": "assistant","content": resposta_triagem})
             return jsonify({"status": "ok", "tipo": "triagem"}), 200
@@ -1007,6 +1026,7 @@ def webhook():
                 f"Se precisar, é só me chamar! 💙"
             )
             enviar_texto(numero_cliente, resposta_fora)
+                notificar_luna(numero_cliente, mensagem_usuario, resposta_fora)
             historico.append({"role": "user",    "content": texto_recebido})
             historico.append({"role": "assistant","content": resposta_fora})
             return jsonify({"status": "ok", "tipo": "fora_escopo"}), 200
@@ -1052,6 +1072,7 @@ def webhook():
 
         # Fallback: texto
         enviar_texto(numero_cliente, resposta_texto)
+                notificar_luna(numero_cliente, mensagem_usuario, resposta_texto)
         print(f"[SIMONE] Texto (fallback) → {numero_cliente}: {resposta_texto[:80]}...")
         return jsonify({"status": "ok", "tipo": "texto_fallback"}), 200
 
