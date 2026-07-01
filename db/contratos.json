@@ -1,1 +1,12 @@
-{}
+{
+  "EC-003": {
+    "cliente": "Mara",
+    "telefone": "558389083594",
+    "valor": 150.00,
+    "valor_com_juros": 172.50,
+    "vencimento": "2026-07-17",
+    "data_criacao": "2026-06-17",
+    "status": "ativo",
+    "observacao": "Data corrigida em 01/07 — Simone cadastrou vencimento errado (02/07). Correto: 17/07."
+  }
+}
